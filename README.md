@@ -89,7 +89,7 @@ cargo tauri icon path/to/logo.png
 推 `v*` 标签触发 `release.yml`：
 
 ```sh
-git tag v0.2.0
+git tag v0.0.1
 git push --tags
 ```
 
@@ -125,4 +125,4 @@ cargo tauri signer generate -w ~/.tauri/myapp.key
 - Rust：默认无注释，仅在非显然约束 / 易踩坑处加一行
 - 错误：所有 `Result` 走 `error::AppError`，`#[tauri::command]` 直接返回 `Result<T, AppError>`，序列化为字符串给前端
 - 前端：Svelte 5 Runes 模式（`$state` / `$derived` / `$props`）
-- 跨语言类型：手写在 `src/lib/types.ts`，与 Rust struct 对齐（v0.2 不引入自动生成）
+- 跨语言类型：手写在 `src/lib/types.ts`，与 Rust struct 对齐（v0.0.1 不引入自动生成）
