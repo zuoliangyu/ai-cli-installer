@@ -1,12 +1,15 @@
 <script lang="ts">
   import ToolCard from "./lib/components/ToolCard.svelte";
   import MirrorStatus from "./lib/components/MirrorStatus.svelte";
+  import About from "./lib/components/About.svelte";
+  import PresetSection from "./lib/components/PresetSection.svelte";
   import { tools } from "./lib/stores";
   import { onMount } from "svelte";
   import { initApp } from "./lib/api";
 
   let appReady = $state(false);
   let initError = $state<string | null>(null);
+  let aboutOpen = $state(false);
 
   onMount(async () => {
     try {
@@ -34,12 +37,20 @@
         <ToolCard {tool} />
       {/each}
     </section>
+
+    <PresetSection />
   {/if}
 
   <footer>
-    <span>v0.0.5</span>
+    <button class="footer-btn" onclick={() => (aboutOpen = true)}>
+      v0.0.6 · 关于
+    </button>
   </footer>
 </main>
+
+{#if aboutOpen}
+  <About ondismiss={() => (aboutOpen = false)} />
+{/if}
 
 <style>
   main {
@@ -85,9 +96,21 @@
 
   footer {
     margin-top: auto;
-    color: var(--text-muted);
     text-align: center;
-    font-size: 0.85rem;
     padding-top: 1rem;
+  }
+  .footer-btn {
+    background: none;
+    border: none;
+    padding: 0.25rem 0.5rem;
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    cursor: pointer;
+    border-radius: 4px;
+    transition: background 0.15s;
+  }
+  .footer-btn:hover {
+    background: rgba(0, 0, 0, 0.05);
+    color: var(--text);
   }
 </style>

@@ -7,6 +7,7 @@ mod error;
 mod installer;
 mod mirrors;
 mod platform;
+mod presets;
 mod tools;
 mod upstream;
 mod verifier;
@@ -34,6 +35,9 @@ pub fn run() {
             commands::check_path_status,
             commands::add_to_path,
             commands::remove_from_path,
+            commands::list_claude_presets,
+            commands::get_claude_settings,
+            commands::apply_claude_preset,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

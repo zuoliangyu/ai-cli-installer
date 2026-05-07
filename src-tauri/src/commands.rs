@@ -5,6 +5,7 @@ use tokio::sync::RwLock;
 use crate::env_manager::{self, PathScope, PathStatus};
 use crate::error::{AppError, Result};
 use crate::mirrors::{self, MirrorList, MirrorProbe};
+use crate::presets::{self, ClaudePreset, ClaudeSettingsEnv};
 use crate::tools::{claude_code::ClaudeCode, InstallReport, Tool, ToolDescriptor};
 
 /// Resolve a tool_id to its launcher dir, or return Other error.
@@ -100,4 +101,19 @@ fn parse_scope(s: Option<&str>) -> Result<PathScope> {
         "user" => PathScope::User,
         other => return Err(AppError::Other(format!("unknown scope: {}", other))),
     })
+}
+
+#[tauri::command]
+pub async fn list_claude_presets() -> Result<Vec<ClaudePreset>> {
+    Ok(presets::list_all_presets())
+}
+
+#[tauri::command]
+pub async fn get_claude_settings() -> Result<ClaudeSettingsEnv> {
+    presets::read_current_env()
+}
+
+#[tauri::command]
+pub async fn apply_claude_preset(base_url: String, auth_token: String) -> Result<()> {
+    presets::apply_env(&base_url, &auth_token)
 }

@@ -9,6 +9,8 @@ import type {
   Channel,
   PathStatus,
   PathScope,
+  ClaudePreset,
+  ClaudeSettingsEnv,
 } from "./types";
 
 export async function initApp(): Promise<void> {
@@ -61,4 +63,22 @@ export async function removeFromPath(
   scope: PathScope = "system"
 ): Promise<void> {
   await invoke<void>("remove_from_path", { toolId, scope });
+}
+
+export async function listClaudePresets(): Promise<ClaudePreset[]> {
+  return invoke<ClaudePreset[]>("list_claude_presets");
+}
+
+export async function getClaudeSettings(): Promise<ClaudeSettingsEnv> {
+  return invoke<ClaudeSettingsEnv>("get_claude_settings");
+}
+
+export async function applyClaudePreset(
+  baseUrl: string,
+  authToken: string
+): Promise<void> {
+  await invoke<void>("apply_claude_preset", {
+    baseUrl,
+    authToken,
+  });
 }

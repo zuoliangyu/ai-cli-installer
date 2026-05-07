@@ -4,6 +4,35 @@
 
 ## [Unreleased]
 
+## [0.0.6] - 2026-05-07
+
+### 新增
+
+- **「关于」弹窗**：footer 点击「v0.0.6 · 关于」按钮打开
+  - 作者：左岚（链接到[哔哩哔哩主页](https://space.bilibili.com/27619688)）
+  - 项目：[GitHub Releases](https://github.com/zuoliangyu/ai-cli-installer-dist)
+  - 应用版本号
+  - ESC / 点击外部 / 点击「关闭」按钮关闭
+- 引入 `@tauri-apps/plugin-shell`，链接通过 `shell.open()` 走系统默认浏览器打开（不会卡在 WebView 内）
+- **中转站快捷配置**：主界面新增「中转站快捷配置」区块
+  - 内置预设：
+    - **Micu (米醋)** — `https://www.micuapi.ai`（v0.0.6 起的新地址，不再用 cc-switch-web 老仓库的 `openclaudecode.cn`）
+    - **E-FlowCode** — `https://e-flowcode.cc`
+  - **同步 cc-switch**：自动读 `~/.cc-switch/cc-switch.db` 的 claude providers 表（只读、最佳努力，db 不存在或解析失败静默跳过），与内置预设合并去重（按 base_url 大小写无关）
+  - 应用预设：仅写入 `~/.claude/settings.json` 的 `env.ANTHROPIC_BASE_URL` + `env.ANTHROPIC_AUTH_TOKEN`，**保留**已有的 `effortLevel` / `enabledPlugins` / 其他 `env.*` 字段
+  - 主界面显示当前激活的 BASE_URL，匹配的预设卡片标「使用中」徽章
+  - v0.0.6 仅支持 Claude（Codex / Gemini 在路上）
+
+### 内部
+
+- 新增 `presets.rs`：Claude 预设抽象 + cc-switch DB 读取 + settings.json 合并写入
+- 新增 3 个 Tauri 命令：`list_claude_presets` / `get_claude_settings` / `apply_claude_preset`
+- 引入 `rusqlite` 依赖（bundled SQLite，跨平台）
+
+### 注意
+
+`~/.claude/settings.json` 是用户级配置，与 cc-switch 共享。如果你正在用 cc-switch 切换 provider，本应用的「应用预设」会覆盖 cc-switch 写入的 `BASE_URL` / `AUTH_TOKEN`。两者互相可见，无需手动同步——但同时只能有一个生效。
+
 ## [0.0.5] - 2026-05-07
 
 ### 修复
