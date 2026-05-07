@@ -122,7 +122,10 @@ impl CodexCli {
         match npm_installer::install_via_mirror_tarballs(&client, &mirrors, &version, plat).await {
             Ok(()) => tracing::info!("Codex installed via mirror tarballs"),
             Err(e) => {
-                tracing::warn!("codex mirror tarball install failed ({}), falling back to npmmirror", e);
+                tracing::warn!(
+                    "codex mirror tarball install failed ({}), falling back to npmmirror",
+                    e
+                );
                 npm_installer::install_global(Self::NPM_PACKAGE, None).await?;
             }
         }
@@ -170,7 +173,12 @@ impl Tool for CodexCli {
             name: "Codex".to_string(),
             description: "OpenAI 官方命令行编码代理".to_string(),
             installed_version: None,
-            install_path: self.launcher_path().and_then(|p| p.to_str().map(String::from)),
+            latest_version: None,
+            stable_version: None,
+            installations: Vec::new(),
+            install_path: self
+                .launcher_path()
+                .and_then(|p| p.to_str().map(String::from)),
             supports_npm: true,
             npm_package: Some(Self::NPM_PACKAGE.to_string()),
             npm_min_node: Some(self.npm_min_node()),
@@ -199,7 +207,8 @@ impl Tool for CodexCli {
         let started = Instant::now();
         match method {
             InstallMethod::Native => {
-                self.install_native(app, client, mirrors, channel, started).await
+                self.install_native(app, client, mirrors, channel, started)
+                    .await
             }
             InstallMethod::Npm => self.install_npm(client, mirrors, channel, started).await,
         }
@@ -228,8 +237,8 @@ fn decompress_zst(src: &std::path::Path, dst: &std::path::Path) -> Result<()> {
 
     let input =
         File::open(src).map_err(|e| AppError::Other(format!("open {}: {}", src.display(), e)))?;
-    let mut decoder =
-        zstd::stream::Decoder::new(input).map_err(|e| AppError::Other(format!("zstd init: {}", e)))?;
+    let mut decoder = zstd::stream::Decoder::new(input)
+        .map_err(|e| AppError::Other(format!("zstd init: {}", e)))?;
     let mut output = File::create(dst)
         .map_err(|e| AppError::Other(format!("create {}: {}", dst.display(), e)))?;
     io::copy(&mut decoder, &mut output)

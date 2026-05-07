@@ -68,6 +68,12 @@ pub struct Fix {
     pub description: String,
     pub doc_url: Option<String>,
     pub patches: Vec<Patch>,
+    #[serde(default)]
+    pub configured: bool,
+    #[serde(default)]
+    pub configured_patches: usize,
+    #[serde(default)]
+    pub total_patches: usize,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -81,15 +87,22 @@ struct FixesFile {
 pub async fn list_fixes(client: &reqwest::Client) -> Result<Vec<Fix>> {
     for url in FIXES_REMOTE_URLS {
         match fetch_remote(client, url).await {
-            Ok(fixes) => {
-                tracing::info!("fixes loaded from remote: {} ({} entries)", url, fixes.len());
+            Ok(mut fixes) => {
+                annotate_config_status(&mut fixes);
+                tracing::info!(
+                    "fixes loaded from remote: {} ({} entries)",
+                    url,
+                    fixes.len()
+                );
                 return Ok(fixes);
             }
             Err(e) => tracing::warn!("fixes fetch failed from {}: {}", url, e),
         }
     }
     tracing::info!("fixes: all remote sources failed, using embedded fallback");
-    parse_embedded()
+    let mut fixes = parse_embedded()?;
+    annotate_config_status(&mut fixes);
+    Ok(fixes)
 }
 
 async fn fetch_remote(client: &reqwest::Client, url: &str) -> Result<Vec<Fix>> {
@@ -119,9 +132,41 @@ fn list_fixes_embedded() -> Result<Vec<Fix>> {
     parse_embedded()
 }
 
+fn annotate_config_status(fixes: &mut [Fix]) {
+    for fix in fixes {
+        let configured = fix
+            .patches
+            .iter()
+            .filter(|patch| patch_is_configured(patch))
+            .count();
+        fix.total_patches = fix.patches.len();
+        fix.configured_patches = configured;
+        fix.configured = fix.total_patches > 0 && configured == fix.total_patches;
+    }
+}
+
+fn patch_is_configured(patch: &Patch) -> bool {
+    let Ok(path) = patch.target.resolve() else {
+        return false;
+    };
+    let Ok(content) = std::fs::read_to_string(path) else {
+        return false;
+    };
+    let Ok(root) = serde_json::from_str::<serde_json::Value>(&content) else {
+        return false;
+    };
+    get_dotted(&root, &patch.path).is_some_and(|current| current == &patch.value)
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct ApplyReport {
     pub applied_count: usize,
+    pub touched_files: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RemoveReport {
+    pub removed_count: usize,
     pub touched_files: Vec<String>,
 }
 
@@ -162,6 +207,44 @@ pub async fn apply_selected(client: &reqwest::Client, fix_ids: &[String]) -> Res
     })
 }
 
+pub async fn remove_selected(client: &reqwest::Client, fix_ids: &[String]) -> Result<RemoveReport> {
+    let all = match list_fixes(client).await {
+        Ok(v) => v,
+        Err(_) => list_fixes_embedded()?,
+    };
+    let selected: Vec<&Fix> = all.iter().filter(|f| fix_ids.contains(&f.id)).collect();
+    if selected.is_empty() {
+        return Ok(RemoveReport {
+            removed_count: 0,
+            touched_files: vec![],
+        });
+    }
+
+    let mut groups: std::collections::BTreeMap<TargetFile, Vec<&Patch>> =
+        std::collections::BTreeMap::new();
+    for fix in &selected {
+        for p in &fix.patches {
+            groups.entry(p.target).or_default().push(p);
+        }
+    }
+
+    let mut touched = Vec::new();
+    let mut removed_count = 0;
+    for (target, patches) in groups {
+        let path = target.resolve()?;
+        let removed = remove_patches_from_file(&path, &patches)?;
+        if removed > 0 {
+            removed_count += removed;
+            touched.push(path.to_string_lossy().to_string());
+        }
+    }
+
+    Ok(RemoveReport {
+        removed_count,
+        touched_files: touched,
+    })
+}
+
 fn apply_patches_to_file(path: &std::path::Path, patches: &[&Patch]) -> Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -187,6 +270,37 @@ fn apply_patches_to_file(path: &std::path::Path, patches: &[&Patch]) -> Result<(
         .map_err(|e| AppError::Other(format!("serialize {}: {}", path.display(), e)))?;
     std::fs::write(path, pretty)?;
     Ok(())
+}
+
+fn remove_patches_from_file(path: &std::path::Path, patches: &[&Patch]) -> Result<usize> {
+    if !path.exists() {
+        return Ok(0);
+    }
+
+    let content = std::fs::read_to_string(path)?;
+    if content.trim().is_empty() {
+        return Ok(0);
+    }
+
+    let mut root: serde_json::Value = serde_json::from_str(&content)
+        .map_err(|e| AppError::Other(format!("parse {}: {}", path.display(), e)))?;
+
+    let mut removed = 0;
+    for patch in patches {
+        if get_dotted(&root, &patch.path).is_some_and(|current| current == &patch.value)
+            && remove_dotted(&mut root, &patch.path)
+        {
+            removed += 1;
+        }
+    }
+
+    if removed > 0 {
+        let pretty = serde_json::to_string_pretty(&root)
+            .map_err(|e| AppError::Other(format!("serialize {}: {}", path.display(), e)))?;
+        std::fs::write(path, pretty)?;
+    }
+
+    Ok(removed)
 }
 
 /// Set a dotted-path value inside a JSON object, creating intermediate objects
@@ -223,4 +337,83 @@ fn set_dotted(root: &mut serde_json::Value, path: &str, value: serde_json::Value
         current = map.get_mut(*seg).unwrap();
     }
     Ok(())
+}
+
+fn get_dotted<'a>(root: &'a serde_json::Value, path: &str) -> Option<&'a serde_json::Value> {
+    if path.is_empty() {
+        return None;
+    }
+    let mut current = root;
+    for seg in path.split('.') {
+        current = current.as_object()?.get(seg)?;
+    }
+    Some(current)
+}
+
+fn remove_dotted(root: &mut serde_json::Value, path: &str) -> bool {
+    let Some((parent_path, leaf)) = path.rsplit_once('.') else {
+        return root
+            .as_object_mut()
+            .and_then(|map| map.remove(path))
+            .is_some();
+    };
+    let Some(parent) = get_dotted_mut(root, parent_path) else {
+        return false;
+    };
+    parent
+        .as_object_mut()
+        .and_then(|map| map.remove(leaf))
+        .is_some()
+}
+
+fn get_dotted_mut<'a>(
+    root: &'a mut serde_json::Value,
+    path: &str,
+) -> Option<&'a mut serde_json::Value> {
+    if path.is_empty() {
+        return None;
+    }
+    let mut current = root;
+    for seg in path.split('.') {
+        current = current.as_object_mut()?.get_mut(seg)?;
+    }
+    Some(current)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{get_dotted, remove_dotted, set_dotted};
+    use serde_json::json;
+
+    #[test]
+    fn reads_dotted_json_value() {
+        let root = json!({ "env": { "DISABLE_TELEMETRY": "1" } });
+        assert_eq!(
+            get_dotted(&root, "env.DISABLE_TELEMETRY"),
+            Some(&json!("1"))
+        );
+    }
+
+    #[test]
+    fn missing_dotted_json_value_returns_none() {
+        let root = json!({ "env": {} });
+        assert_eq!(get_dotted(&root, "env.DISABLE_TELEMETRY"), None);
+    }
+
+    #[test]
+    fn set_then_read_dotted_json_value() {
+        let mut root = json!({});
+        set_dotted(&mut root, "env.DISABLE_ERROR_REPORTING", json!("1")).unwrap();
+        assert_eq!(
+            get_dotted(&root, "env.DISABLE_ERROR_REPORTING"),
+            Some(&json!("1"))
+        );
+    }
+
+    #[test]
+    fn remove_dotted_json_value() {
+        let mut root = json!({ "env": { "DISABLE_TELEMETRY": "1" } });
+        assert!(remove_dotted(&mut root, "env.DISABLE_TELEMETRY"));
+        assert_eq!(get_dotted(&root, "env.DISABLE_TELEMETRY"), None);
+    }
 }

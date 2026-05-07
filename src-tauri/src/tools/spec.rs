@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use tauri::AppHandle;
 
 use crate::error::Result;
+use crate::install_diagnostics::ToolInstallation;
 use crate::mirrors::MirrorList;
 
 pub type ToolId = &'static str;
@@ -28,6 +29,9 @@ pub struct ToolDescriptor {
     pub name: String,
     pub description: String,
     pub installed_version: Option<String>,
+    pub latest_version: Option<String>,
+    pub stable_version: Option<String>,
+    pub installations: Vec<ToolInstallation>,
     pub install_path: Option<String>,
     /// True if this tool can be installed via npm. UI surfaces the toggle.
     pub supports_npm: bool,
