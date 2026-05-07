@@ -128,3 +128,10 @@ cargo tauri signer generate -w ~/.tauri/myapp.key
 - 错误：所有 `Result` 走 `error::AppError`，`#[tauri::command]` 直接返回 `Result<T, AppError>`，序列化为字符串给前端
 - 前端：Svelte 5 Runes 模式（`$state` / `$derived` / `$props`）
 - 跨语言类型：手写在 `src/lib/types.ts`，与 Rust struct 对齐（v0.0.1 不引入自动生成）
+
+## 贡献者
+
+- [@zuoliangyu](https://github.com/zuoliangyu)（左岚）— 项目作者及主要维护者
+- [@LS-plan](https://github.com/LS-plan)（ShuyuS）— v0.0.12：安装诊断 + 修复项配置状态 + 启动窗口居中（PR [#1](https://github.com/zuoliangyu/ai-cli-installer/pull/1)）
+
+完整变更与每版贡献者列表见 [CHANGELOG.md](CHANGELOG.md)。

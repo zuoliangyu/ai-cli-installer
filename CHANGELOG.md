@@ -4,6 +4,33 @@
 
 ## [Unreleased]
 
+## [0.0.12] - 2026-05-08
+
+### 新增
+
+- **安装诊断**：工具卡片新增「安装诊断」区块，分别识别 Native / npm 全局 / PATH 三个来源的安装，标注当前 PATH 上生效的来源、是否归本应用管理，并在检测到多重安装时给出处理建议
+- **修复项配置状态**：「故障排查 / 配置补丁」区块按 `配置文件当前值 == 期望值` 判定每条 fix 是否已配置，支持 全部 / 已配置 / 未配置 三档过滤；已配置项可一键「取消配置」（仅当前值与期望值完全匹配时才会删除，避免误删用户自定义）
+- **触达文件可点击**：应用 / 取消修复后的提示信息会列出受影响的 JSON 文件路径，点击用系统默认应用打开
+- **启动窗口尺寸**：首次启动时自动按当前显示器 60% 尺寸居中（仅首次，后续启动尊重用户调整后的窗口位置）
+
+### 修复 (v0.0.12 内补丁)
+
+- `path_starts_with` 在 Windows 上改走组件级大小写无关比较，避免 `managed` 标记被路径大小写差异误判
+- stable 通道镜像无独立指针时显式标记 `stable_falls_back_to_latest`，UI 显示「stable (跟随 latest v…)」防止版本号误读为 stable 自身的版本
+- `open_path` 命令收紧：仅允许 `.json` 文件、需通过 `canonicalize`，Windows 改用 `cmd /c start ""` 用默认关联应用打开而不是不可靠的 `explorer.exe <file>`
+
+### 内部
+
+- 新增 `install_diagnostics` 模块：并发探测 native 路径 + `npm list -g --json` + `where`/`command -v` 三个来源，归一为 `ToolInstallation { source, version, path, current_path, managed }`
+- `fixes.rs` 加 `annotate_config_status` / `remove_dotted` / `get_dotted` + `remove_selected` 命令，配套 `RemoveReport` 类型；新增 4 个单元测试覆盖 dotted-path get/set/remove
+- `ToolDescriptor` 加 `latest_version` / `stable_version` / `stable_falls_back_to_latest` / `installations` 字段，`list_tools` 用 `tokio::join!` 并发执行 8 个探测任务（每个工具 4 项：installed / latest / stable / 诊断）
+- `install_diagnostics::path_starts_with` 加 Windows / Unix 平台条件单元测试
+
+### 贡献者
+
+- [@LS-plan](https://github.com/LS-plan) (ShuyuS) — feature PR [#1](https://github.com/zuoliangyu/ai-cli-installer/pull/1)：安装诊断、修复项配置状态、窗口居中
+- [@zuoliangyu](https://github.com/zuoliangyu) — 代码审查 + 后续修正（commit `c5bd0bc`）
+
 ## [0.0.11] - 2026-05-07
 
 ### 改动
