@@ -4,13 +4,33 @@
 //! file). UI shows them as a checklist; user picks which to apply, app merges
 //! them into `~/.claude/settings.json` or `~/.claude.json`, preserving every
 //! other field already in those files.
+//!
+//! ## Loading order (v0.0.10+)
+//!
+//! 1. Try to fetch latest `fixes.json` from a list of remote URLs (raw GH +
+//!    GH proxies). 5s per-URL timeout. First success wins.
+//! 2. If all remote attempts fail → fall back to the build-time embedded copy.
+//!
+//! That way adding/editing fixes is just: edit `fixes.json` on `main`, push,
+//! and existing app installs see the new list on next launch — no release
+//! required.
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use std::time::Duration;
 
 use crate::error::{AppError, Result};
 
 const FIXES_JSON: &str = include_str!("../fixes.json");
+
+/// Remote candidates for fetching the latest `fixes.json`. Tried in order.
+/// Direct first; falls through to GH proxies on failure.
+const FIXES_REMOTE_URLS: &[&str] = &[
+    "https://raw.githubusercontent.com/zuoliangyu/ai-cli-installer/main/src-tauri/fixes.json",
+    "https://gh-proxy.com/https://raw.githubusercontent.com/zuoliangyu/ai-cli-installer/main/src-tauri/fixes.json",
+    "https://fastgit.cc/https://raw.githubusercontent.com/zuoliangyu/ai-cli-installer/main/src-tauri/fixes.json",
+    "https://github.chenc.dev/https://raw.githubusercontent.com/zuoliangyu/ai-cli-installer/main/src-tauri/fixes.json",
+];
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(rename_all = "snake_case")]
@@ -57,10 +77,46 @@ struct FixesFile {
     fixes: Vec<Fix>,
 }
 
-pub fn list_fixes() -> Result<Vec<Fix>> {
-    let parsed: FixesFile = serde_json::from_str(FIXES_JSON)
-        .map_err(|e| AppError::Other(format!("fixes.json embedded payload invalid: {}", e)))?;
+/// Try remote URLs in order, fall back to the build-time embedded JSON.
+pub async fn list_fixes(client: &reqwest::Client) -> Result<Vec<Fix>> {
+    for url in FIXES_REMOTE_URLS {
+        match fetch_remote(client, url).await {
+            Ok(fixes) => {
+                tracing::info!("fixes loaded from remote: {} ({} entries)", url, fixes.len());
+                return Ok(fixes);
+            }
+            Err(e) => tracing::warn!("fixes fetch failed from {}: {}", url, e),
+        }
+    }
+    tracing::info!("fixes: all remote sources failed, using embedded fallback");
+    parse_embedded()
+}
+
+async fn fetch_remote(client: &reqwest::Client, url: &str) -> Result<Vec<Fix>> {
+    let resp = client
+        .get(url)
+        .timeout(Duration::from_secs(5))
+        .send()
+        .await?
+        .error_for_status()?;
+    let bytes = resp.bytes().await?;
+    let parsed: FixesFile = serde_json::from_slice(&bytes)
+        .map_err(|e| AppError::Other(format!("remote fixes.json invalid: {}", e)))?;
     Ok(parsed.fixes)
+}
+
+fn parse_embedded() -> Result<Vec<Fix>> {
+    let parsed: FixesFile = serde_json::from_str(FIXES_JSON)
+        .map_err(|e| AppError::Other(format!("embedded fixes.json invalid: {}", e)))?;
+    Ok(parsed.fixes)
+}
+
+/// Sync helper that only reads the embedded copy. Used by `apply_selected`
+/// (which needs to look up fix definitions by id without making a network
+/// call mid-apply). Future enhancement: cache last-good remote payload on
+/// disk so apply_selected sees the fresh definitions too.
+fn list_fixes_embedded() -> Result<Vec<Fix>> {
+    parse_embedded()
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -69,8 +125,13 @@ pub struct ApplyReport {
     pub touched_files: Vec<String>,
 }
 
-pub fn apply_selected(fix_ids: &[String]) -> Result<ApplyReport> {
-    let all = list_fixes()?;
+pub async fn apply_selected(client: &reqwest::Client, fix_ids: &[String]) -> Result<ApplyReport> {
+    // Use the same loader as list_fixes so apply respects remote-edited
+    // definitions. Embedded fallback covers offline.
+    let all = match list_fixes(client).await {
+        Ok(v) => v,
+        Err(_) => list_fixes_embedded()?,
+    };
     let selected: Vec<&Fix> = all.iter().filter(|f| fix_ids.contains(&f.id)).collect();
     if selected.is_empty() {
         return Ok(ApplyReport {

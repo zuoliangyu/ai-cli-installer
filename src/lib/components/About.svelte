@@ -59,7 +59,7 @@
       </dd>
 
       <dt>版本</dt>
-      <dd>v0.0.9</dd>
+      <dd>v0.0.10</dd>
     </dl>
 
     <div class="actions">

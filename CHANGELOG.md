@@ -4,6 +4,21 @@
 
 ## [Unreleased]
 
+## [0.0.10] - 2026-05-07
+
+### 改动
+
+- **修复列表改为远程拉取**：app 启动时从 GitHub 直接拉最新 `fixes.json`，编辑 fix 不再需要发新版
+  - 候选 URL：raw.githubusercontent.com 直链 → gh-proxy / fastgit / github.chenc.dev 三个加速代理串行尝试
+  - 5 秒超时，全部失败时 fallback 到编译时嵌入的版本（保证离线 / 远程全挂时 UI 仍可用）
+  - 维护方式：直接编辑 [`src-tauri/fixes.json`](src-tauri/fixes.json) 推到 main，下一次用户启动应用就生效
+
+### 内部
+
+- `fixes::list_fixes` 改为 async + `&reqwest::Client` 参数（复用 AppState 的全局 client）
+- `fixes::apply_selected` 同样改 async，应用前先尝试拿远程最新定义，离线时退到嵌入版
+- 新增 `fetch_remote` / `parse_embedded` / `list_fixes_embedded` 辅助函数
+
 ## [0.0.9] - 2026-05-07
 
 ### 新增

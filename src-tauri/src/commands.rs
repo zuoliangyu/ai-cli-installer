@@ -98,13 +98,16 @@ pub async fn detect_node() -> Result<NodeInfo> {
 }
 
 #[tauri::command]
-pub async fn list_fixes() -> Result<Vec<Fix>> {
-    fixes::list_fixes()
+pub async fn list_fixes(state: State<'_, Arc<AppState>>) -> Result<Vec<Fix>> {
+    fixes::list_fixes(&state.client).await
 }
 
 #[tauri::command]
-pub async fn apply_fixes(fix_ids: Vec<String>) -> Result<ApplyReport> {
-    fixes::apply_selected(&fix_ids)
+pub async fn apply_fixes(
+    state: State<'_, Arc<AppState>>,
+    fix_ids: Vec<String>,
+) -> Result<ApplyReport> {
+    fixes::apply_selected(&state.client, &fix_ids).await
 }
 
 #[tauri::command]
