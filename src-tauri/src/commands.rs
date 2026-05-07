@@ -4,6 +4,7 @@ use tokio::sync::RwLock;
 
 use crate::env_manager::{self, PathScope, PathStatus};
 use crate::error::{AppError, Result};
+use crate::fixes::{self, ApplyReport, Fix};
 use crate::mirrors::{self, MirrorList, MirrorProbe};
 use crate::npm_installer::{self, NodeInfo};
 use crate::presets::{self, ClaudePreset, ClaudeSettingsEnv};
@@ -94,6 +95,16 @@ pub async fn install_tool(
 #[tauri::command]
 pub async fn detect_node() -> Result<NodeInfo> {
     npm_installer::detect_node().await
+}
+
+#[tauri::command]
+pub async fn list_fixes() -> Result<Vec<Fix>> {
+    fixes::list_fixes()
+}
+
+#[tauri::command]
+pub async fn apply_fixes(fix_ids: Vec<String>) -> Result<ApplyReport> {
+    fixes::apply_selected(&fix_ids)
 }
 
 #[tauri::command]

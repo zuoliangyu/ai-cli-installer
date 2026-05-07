@@ -25,6 +25,29 @@ export interface NodeInfo {
   npm_version: string | null;
 }
 
+export type FixTargetFile = "claude_settings" | "claude_json";
+
+export interface FixPatch {
+  target: FixTargetFile;
+  path: string;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  value: any;
+}
+
+export interface Fix {
+  id: string;
+  code: string;
+  title: string;
+  description: string;
+  doc_url: string | null;
+  patches: FixPatch[];
+}
+
+export interface ApplyFixReport {
+  applied_count: number;
+  touched_files: string[];
+}
+
 export interface DownloadProgress {
   tool_id: string;
   downloaded: number;

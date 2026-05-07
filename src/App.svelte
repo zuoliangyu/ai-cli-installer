@@ -3,6 +3,7 @@
   import MirrorStatus from "./lib/components/MirrorStatus.svelte";
   import About from "./lib/components/About.svelte";
   import PresetSection from "./lib/components/PresetSection.svelte";
+  import FixesSection from "./lib/components/FixesSection.svelte";
   import { tools } from "./lib/stores";
   import { onMount } from "svelte";
   import { initApp } from "./lib/api";
@@ -39,11 +40,13 @@
     </section>
 
     <PresetSection />
+
+    <FixesSection />
   {/if}
 
   <footer>
     <button class="footer-btn" onclick={() => (aboutOpen = true)}>
-      v0.0.8 · 关于
+      v0.0.9 · 关于
     </button>
   </footer>
 </main>

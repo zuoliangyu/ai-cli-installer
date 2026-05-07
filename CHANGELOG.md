@@ -4,6 +4,29 @@
 
 ## [Unreleased]
 
+## [0.0.9] - 2026-05-07
+
+### 新增
+
+- **故障排查 / 配置补丁**：主界面新增「故障排查 / 配置补丁」区块
+  - 内置 5 条来自 [OCC 配置文档](https://docs.openclaudecode.cn) 的常见修复
+    - **CC-006**：禁用实验性 Beta 参数（解决 AWS 分组 400 invalid beta flag）
+    - **CC-017**：跳过 WebFetch 预检（国内网络下让 WebFetch 可用，强烈推荐）
+    - **CC-005**：标记 Onboarding 已完成（绕过首次启动连通性校验）
+    - 关闭遥测 / 错误上报（隐私）
+    - 不附加 `Co-Authored-By` 提交标记
+  - 用法：勾选后点「应用」，对应字段自动写入 `~/.claude/settings.json` 或 `~/.claude.json`
+  - **保留**配置文件已有的所有其他字段，只改/加选中的键
+  - 每条修复显示要写入的目标文件、JSON 路径、值，所见即所得
+  - 支持点开 OCC 完整文档详细了解
+
+### 内部
+
+- 新增 `src-tauri/fixes.json`：JSON 数据源，结构化 fix 列表，编译时通过 `include_str!` 嵌入二进制（不依赖网络）
+- 新增 `fixes.rs` 模块：`Fix` / `Patch` / `TargetFile` 类型 + dotted-path setter（支持 `env.X.Y` 这样的嵌套路径）+ 文件级合并写入（按 target 分组减少 I/O）
+- 新增 2 个 Tauri 命令：`list_fixes` / `apply_fixes`
+- 后续加新修复只需编辑 `fixes.json` 即可，新版本发出去就生效
+
 ## [0.0.8] - 2026-05-07
 
 ### 新增

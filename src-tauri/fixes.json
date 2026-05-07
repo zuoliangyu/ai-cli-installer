@@ -1,0 +1,82 @@
+{
+  "version": 1,
+  "updated_at": "2026-05-07",
+  "comment": "Built-in fix recipes from OCC docs (https://docs.openclaudecode.cn). Each fix is a list of patches that get merged into ~/.claude/settings.json or ~/.claude.json.",
+  "fixes": [
+    {
+      "id": "cc-006-disable-betas",
+      "code": "CC-006",
+      "title": "禁用实验性 Beta 参数",
+      "description": "AWS 分组上游不接受 anthropic-beta 请求头，会返回 400 invalid beta flag。开启后 Claude Code 不再附加该头。",
+      "doc_url": "https://docs.openclaudecode.cn/#/errors/cc-400-experimental-betas",
+      "patches": [
+        {
+          "target": "claude_settings",
+          "path": "env.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS",
+          "value": "1"
+        }
+      ]
+    },
+    {
+      "id": "cc-017-skip-webfetch-preflight",
+      "code": "CC-017",
+      "title": "跳过 WebFetch 预检（国内网络强烈推荐）",
+      "description": "WebFetch 抓页面前会先请求 claude.ai 做域名预检；国内网络/防火墙拦掉后整个 WebFetch 失效。开启后跳过预检，直接抓目标页面。",
+      "doc_url": "https://docs.openclaudecode.cn/#/errors/cc-webfetch-preflight-fail",
+      "patches": [
+        {
+          "target": "claude_settings",
+          "path": "skipWebFetchPreflight",
+          "value": true
+        }
+      ]
+    },
+    {
+      "id": "cc-005-onboarding-done",
+      "code": "CC-005",
+      "title": "标记 Onboarding 已完成（绕过首次启动连通性校验）",
+      "description": "Claude Code 首次启动会向 api.anthropic.com 做连通性校验，不受中转地址影响，国内/中转用户被卡在登录前。该字段写入 ~/.claude.json 跳过此校验。",
+      "doc_url": "https://docs.openclaudecode.cn/#/errors/cc-onboarding-connection-block",
+      "patches": [
+        {
+          "target": "claude_json",
+          "path": "hasCompletedOnboarding",
+          "value": true
+        }
+      ]
+    },
+    {
+      "id": "disable-telemetry",
+      "code": "CC-COMMON",
+      "title": "关闭遥测（隐私）",
+      "description": "禁用 Claude Code 向 anthropic 发送匿名使用统计数据。",
+      "doc_url": null,
+      "patches": [
+        {
+          "target": "claude_settings",
+          "path": "env.DISABLE_TELEMETRY",
+          "value": "1"
+        },
+        {
+          "target": "claude_settings",
+          "path": "env.DISABLE_ERROR_REPORTING",
+          "value": "1"
+        }
+      ]
+    },
+    {
+      "id": "include-coauthor-off",
+      "code": "CC-COMMON",
+      "title": "提交时不附加 Co-Authored-By 标记",
+      "description": "Claude Code 默认在 git commit 里加 \"Co-Authored-By: Claude\" 行；这条关掉它，提交记录看起来就跟你自己写的一样。",
+      "doc_url": null,
+      "patches": [
+        {
+          "target": "claude_settings",
+          "path": "includeCoAuthoredBy",
+          "value": false
+        }
+      ]
+    }
+  ]
+}

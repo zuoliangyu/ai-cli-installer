@@ -4,6 +4,7 @@ mod commands;
 mod downloader;
 mod env_manager;
 mod error;
+mod fixes;
 mod installer;
 mod mirrors;
 mod npm_installer;
@@ -40,6 +41,8 @@ pub fn run() {
             commands::get_claude_settings,
             commands::apply_claude_preset,
             commands::detect_node,
+            commands::list_fixes,
+            commands::apply_fixes,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

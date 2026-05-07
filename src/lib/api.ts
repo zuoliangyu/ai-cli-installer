@@ -13,6 +13,8 @@ import type {
   ClaudePreset,
   ClaudeSettingsEnv,
   NodeInfo,
+  Fix,
+  ApplyFixReport,
 } from "./types";
 
 export async function initApp(): Promise<void> {
@@ -46,6 +48,14 @@ export async function installTool(
 
 export async function detectNode(): Promise<NodeInfo> {
   return invoke<NodeInfo>("detect_node");
+}
+
+export async function listFixes(): Promise<Fix[]> {
+  return invoke<Fix[]>("list_fixes");
+}
+
+export async function applyFixes(fixIds: string[]): Promise<ApplyFixReport> {
+  return invoke<ApplyFixReport>("apply_fixes", { fixIds });
 }
 
 export function onDownloadProgress(
