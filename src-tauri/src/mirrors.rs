@@ -98,31 +98,31 @@ pub struct MirrorList {
 
 impl MirrorList {
     /// Built-in fallback used when remote mirrors.json cannot be loaded.
+    /// Keep this list synced with mirrors.json in claude-code-mirror repo.
     pub fn builtin() -> Self {
+        let owner = "zuoliangyu";
+        let repo = "claude-code-mirror";
+
+        let gh = |name: &str, proxy: Option<&str>| Mirror::GhRelease {
+            name: name.to_string(),
+            owner: owner.to_string(),
+            repo: repo.to_string(),
+            proxy: proxy.map(String::from),
+        };
+
         Self {
             mirrors: vec![
                 Mirror::Upstream {
                     name: "official".to_string(),
                     base: "https://downloads.claude.ai/claude-code-releases".to_string(),
                 },
-                Mirror::GhRelease {
-                    name: "ghfast".to_string(),
-                    owner: "zuoliangyu".to_string(),
-                    repo: "claude-code-mirror".to_string(),
-                    proxy: Some("https://ghfast.top".to_string()),
-                },
-                Mirror::GhRelease {
-                    name: "ghproxy".to_string(),
-                    owner: "zuoliangyu".to_string(),
-                    repo: "claude-code-mirror".to_string(),
-                    proxy: Some("https://mirror.ghproxy.com".to_string()),
-                },
-                Mirror::GhRelease {
-                    name: "github-direct".to_string(),
-                    owner: "zuoliangyu".to_string(),
-                    repo: "claude-code-mirror".to_string(),
-                    proxy: None,
-                },
+                gh("github-direct", None),
+                gh("gh-proxy", Some("https://gh-proxy.com")),
+                gh("fastgit", Some("https://fastgit.cc")),
+                gh("yylx", Some("https://git.yylx.win")),
+                gh("chenc", Some("https://github.chenc.dev")),
+                gh("ghproxy-net", Some("https://ghproxy.net")),
+                gh("ghfast", Some("https://ghfast.top")),
             ],
         }
     }
