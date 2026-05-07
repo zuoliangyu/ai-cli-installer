@@ -125,34 +125,6 @@ jobs:
             gh release upload "$TAG" "$f" --repo "$DIST_REPO" --clobber
           done
 
-      # tauri-action filters .nsis.zip / .msi.zip out of artifactPaths when
-      # tagName is empty. But the Tauri updater on Windows downloads the .zip
-      # variant (not the raw .exe/.msi) to atomically replace a running app.
-      # So we have to upload them ourselves. Use find — bash globs + nullglob
-      # behaved unreliably on the Windows git-bash runner.
-      - name: Upload Windows updater bundles
-        if: matrix.os == 'windows-latest'
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.DIST_REPO_PAT }}
-        run: |
-          TAG="${{ needs.prepare.outputs.tag }}"
-          BUNDLE="src-tauri/target/release/bundle"
-          echo "scanning $BUNDLE for updater zip bundles…"
-          mapfile -t files < <(find "$BUNDLE" -type f \
-            \( -name '*.nsis.zip' -o -name '*.nsis.zip.sig' \
-               -o -name '*.msi.zip' -o -name '*.msi.zip.sig' \) 2>/dev/null)
-          if [ "${#files[@]}" -eq 0 ]; then
-            echo "  no zip bundles found — listing $BUNDLE for diagnosis:"
-            find "$BUNDLE" -type f 2>/dev/null | head -40
-            exit 1
-          fi
-          for f in "${files[@]}"; do
-            f="${f//\\//}"
-            echo "uploading: $f"
-            gh release upload "$TAG" "$f" --repo "$DIST_REPO" --clobber
-          done
-
   generate-latest:
     name: Generate latest.json
     needs: [prepare, build]
@@ -181,7 +153,9 @@ jobs:
             [ -n "$f" ] && cat "$f" || echo ""
           }
 
-          WIN_SIG=$(read_sig "*_x64-setup.nsis.zip.sig")
+          # Tauri v2 updater protocol on Windows downloads the NSIS installer
+          # directly and verifies with the installer's .sig — no .zip wrapper.
+          WIN_SIG=$(read_sig "*_x64-setup.exe.sig")
           DARWIN_SIG=$(read_sig "*.app.tar.gz.sig")
           LINUX_SIG=$(read_sig "*_amd64.AppImage.sig")
 
@@ -199,7 +173,7 @@ jobs:
             --arg notes "Release v$VERSION" \
             --arg pub_date "$PUB_DATE" \
             --arg win_sig "$WIN_SIG" \
-            --arg win_url "$URL_BASE/AI.CLI.Installer_${VERSION}_x64-setup.nsis.zip" \
+            --arg win_url "$URL_BASE/AI.CLI.Installer_${VERSION}_x64-setup.exe" \
             --arg darwin_sig "$DARWIN_SIG" \
             --arg darwin_url "$URL_BASE/AI.CLI.Installer.app.tar.gz" \
             --arg linux_sig "$LINUX_SIG" \

@@ -4,6 +4,14 @@
 
 ## [Unreleased]
 
+## [0.0.5] - 2026-05-07
+
+### 修复
+
+- **Windows updater 字段对齐 Tauri v2 协议**：v0.0.3/v0.0.4 错误地以为 Windows 需要 `.nsis.zip` 包装，实际上 Tauri 2 的 v2 updater 在 Windows 直接下载 NSIS `.exe` 安装器并用 `.exe.sig` 验签
+- 删除「Upload Windows updater bundles」步骤（瞎折腾——Tauri 根本不生成那些 `.zip`，"Looking for artifacts in:" 列出的是预期路径而非实际文件）
+- `latest.json` 的 `windows-x86_64` 现在指向 `*_x64-setup.exe` + `.exe.sig`，匹配 Tauri 实际产物
+
 ## [0.0.4] - 2026-05-07
 
 ### 修复

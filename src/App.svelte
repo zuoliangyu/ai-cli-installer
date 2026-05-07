@@ -37,7 +37,7 @@
   {/if}
 
   <footer>
-    <span>v0.0.4</span>
+    <span>v0.0.5</span>
   </footer>
 </main>
 
