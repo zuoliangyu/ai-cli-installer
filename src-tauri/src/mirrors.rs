@@ -89,6 +89,28 @@ impl Mirror {
             }
         }
     }
+
+    /// Generic GH release asset URL (for arbitrary asset names like .tgz files
+    /// that don't follow the `{platform}-{binary}` template). Only meaningful
+    /// for `GhRelease` mirrors — Upstream returns an empty string (caller
+    /// should filter to GhRelease mirrors when downloading npm tarballs).
+    pub fn asset_url(&self, version: &str, asset: &str) -> String {
+        match self {
+            Mirror::Upstream { .. } => String::new(),
+            Mirror::GhRelease {
+                owner, repo, proxy, ..
+            } => {
+                let raw = format!(
+                    "https://github.com/{}/{}/releases/download/v{}/{}",
+                    owner, repo, version, asset
+                );
+                proxy
+                    .as_deref()
+                    .map(|p| format!("{}/{}", p.trim_end_matches('/'), raw))
+                    .unwrap_or(raw)
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

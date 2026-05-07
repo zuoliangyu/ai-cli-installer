@@ -4,6 +4,29 @@
 
 ## [Unreleased]
 
+## [0.0.11] - 2026-05-07
+
+### 改动
+
+- **npm 安装走自家镜像 (.tgz)**：选「npm」安装方式时，app 不再去 `registry.npmmirror.com` 拉，而是从我们的 mirror release 下载 `.tgz` 用 `npm install --offline` 装
+  - 全程走 GH 加速代理链（gh-proxy / fastgit / yylx / chenc / ghproxy.net / ghfast / 直连），与 native 路径同一套机制
+  - 每用户只下 2 个 .tgz：主包 (~13KB) + 当前平台子包 (~80MB)，总量跟 native 路径相当
+  - SHA256 校验对照 mirror 同步时记录的 `npm-manifest.json`
+  - **失败回退**：mirror 拉失败 / 校验失败 / npm 装失败 → 自动 fallback 到 `npm install -g <pkg> --registry npmmirror`（原 v0.0.8 行为）
+
+### 内部
+
+- `Mirror::asset_url(version, asset)` — 通用资产 URL 构造，取代之前只能 `{platform}-{binary}` 模板的限制
+- `npm_installer` 加 `install_via_mirror_tarballs(client, mirrors, version, platform)`：抓 `npm-manifest.json` → 下两个 tgz → `npm cache add` 平台包 → `npm install -g <main> --include=optional --prefer-offline`
+- 同时支持 Claude Code 的「分包式」打包（每平台独立 npm package）和 Codex 的「版本别名式」打包（单包多版本变种）—— 通过 `NpmManifestEntry::detect_platform()` 智能区分
+- 暂存目录 `~/.cache/ai-cli-installer/npm/<version>/` 装完即清
+
+### 镜像仓库改造（v0.0.11 配套）
+
+- `claude-code-mirror` / `codex-mirror` sync workflow 都加 `sync-npm.sh`，每次同步顺手把 npm tarballs 也镜像
+- 已同步：claude-code-mirror v2.1.132（18 资产）+ codex-mirror v0.128.0（16 资产）
+- 同时移除两个 mirror 仓库的 `cleanup-old-releases` 任务——纯镜像仓应保留所有历史
+
 ## [0.0.10] - 2026-05-07
 
 ### 改动

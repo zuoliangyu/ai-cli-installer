@@ -99,7 +99,13 @@ impl CodexCli {
         })
     }
 
-    async fn install_npm(&self, started: Instant) -> Result<InstallReport> {
+    async fn install_npm(
+        &self,
+        client: reqwest::Client,
+        mirrors: MirrorList,
+        channel: String,
+        started: Instant,
+    ) -> Result<InstallReport> {
         let info = npm_installer::detect_node().await?;
         let min = self.npm_min_node();
         if info.node_major < min {
@@ -108,17 +114,28 @@ impl CodexCli {
                 min, info.node_version
             )));
         }
-        npm_installer::install_global(Self::NPM_PACKAGE, None).await?;
 
-        let version = self
+        let plat = platform::current()?;
+        let (_, version) = mirrors::fetch_version(&client, &mirrors, &channel).await?;
+        tracing::info!("codex npm route resolved version {}", version);
+
+        match npm_installer::install_via_mirror_tarballs(&client, &mirrors, &version, plat).await {
+            Ok(()) => tracing::info!("Codex installed via mirror tarballs"),
+            Err(e) => {
+                tracing::warn!("codex mirror tarball install failed ({}), falling back to npmmirror", e);
+                npm_installer::install_global(Self::NPM_PACKAGE, None).await?;
+            }
+        }
+
+        let installed_version = self
             .detect_installed()
             .await
-            .unwrap_or_else(|| "(unknown)".into());
+            .unwrap_or_else(|| version.clone());
         let install_path = npm_installer::npm_global_bin().await.unwrap_or_default();
 
         Ok(InstallReport {
             tool_id: Self::ID.to_string(),
-            version,
+            version: installed_version,
             install_path,
             elapsed_secs: started.elapsed().as_secs(),
             method: InstallMethod::Npm,
@@ -184,7 +201,7 @@ impl Tool for CodexCli {
             InstallMethod::Native => {
                 self.install_native(app, client, mirrors, channel, started).await
             }
-            InstallMethod::Npm => self.install_npm(started).await,
+            InstallMethod::Npm => self.install_npm(client, mirrors, channel, started).await,
         }
     }
 }
