@@ -4,6 +4,22 @@
 
 ## [Unreleased]
 
+## [0.0.3] - 2026-05-07
+
+### 修复
+
+- **Tauri updater 链路打通**：v0.0.1/v0.0.2 都缺 `latest.json`（updater 必需的元数据文件），导致已装用户永远收不到更新提示。本版起每次发版自动生成并上传 `latest.json`
+- **Windows updater 包补齐**：`tauri-action` 在 `tagName: ''` 模式下会过滤掉 `.nsis.zip` / `.msi.zip`（Windows updater 实际使用的产物），现在显式额外上传
+
+### 内部
+
+- `release.yml` 新增 `generate-latest` 作业：所有 build 完后下载各平台 `.sig`，用 jq 拼出 `latest.json`，跨仓库上传到 dist release
+- `publish` 作业现在依赖 `generate-latest`，确保 latest.json 在 release 公开前到位
+- 三平台 url 模式：
+  - `windows-x86_64` → `..._x64-setup.nsis.zip`
+  - `darwin-aarch64` → `....app.tar.gz`
+  - `linux-x86_64`   → `..._amd64.AppImage`
+
 ## [0.0.2] - 2026-05-07
 
 ### 新增

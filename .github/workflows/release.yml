@@ -125,9 +125,97 @@ jobs:
             gh release upload "$TAG" "$f" --repo "$DIST_REPO" --clobber
           done
 
+      # tauri-action filters .nsis.zip / .msi.zip out of artifactPaths when
+      # tagName is empty. But the Tauri updater on Windows downloads the .zip
+      # variant (not the raw .exe/.msi) to atomically replace a running app.
+      # So we have to upload them ourselves.
+      - name: Upload Windows updater bundles
+        if: matrix.os == 'windows-latest'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.DIST_REPO_PAT }}
+        run: |
+          TAG="${{ needs.prepare.outputs.tag }}"
+          BUNDLE="src-tauri/target/release/bundle"
+          shopt -s nullglob
+          for f in "$BUNDLE"/nsis/*.nsis.zip "$BUNDLE"/nsis/*.nsis.zip.sig \
+                   "$BUNDLE"/msi/*.msi.zip "$BUNDLE"/msi/*.msi.zip.sig; do
+            [ -f "$f" ] || continue
+            f="${f//\\//}"
+            echo "uploading updater bundle: $f"
+            gh release upload "$TAG" "$f" --repo "$DIST_REPO" --clobber
+          done
+
+  generate-latest:
+    name: Generate latest.json
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Build and upload latest.json
+        env:
+          GH_TOKEN: ${{ secrets.DIST_REPO_PAT }}
+        run: |
+          TAG="${{ needs.prepare.outputs.tag }}"
+          VERSION="${TAG#v}"
+          tmp=$(mktemp -d)
+          cd "$tmp"
+
+          # Pull the .sig files we need from the just-uploaded release.
+          gh release download "$TAG" --repo "$DIST_REPO" \
+            -p '*.sig' || true
+
+          ls -la
+
+          # Read signatures (each .sig is a single-line minisign blob).
+          read_sig() {
+            local pattern="$1"
+            local f
+            f=$(ls $pattern 2>/dev/null | head -1)
+            [ -n "$f" ] && cat "$f" || echo ""
+          }
+
+          WIN_SIG=$(read_sig "*_x64-setup.nsis.zip.sig")
+          DARWIN_SIG=$(read_sig "*.app.tar.gz.sig")
+          LINUX_SIG=$(read_sig "*_amd64.AppImage.sig")
+
+          if [ -z "$WIN_SIG" ] || [ -z "$DARWIN_SIG" ] || [ -z "$LINUX_SIG" ]; then
+            echo "WARNING: at least one platform missing signature"
+            echo "  win=${#WIN_SIG} darwin=${#DARWIN_SIG} linux=${#LINUX_SIG}"
+          fi
+
+          URL_BASE="https://github.com/$DIST_REPO/releases/download/$TAG"
+          PUB_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+          # jq handles JSON escaping correctly (signatures contain newlines).
+          jq -n \
+            --arg version "$VERSION" \
+            --arg notes "Release v$VERSION" \
+            --arg pub_date "$PUB_DATE" \
+            --arg win_sig "$WIN_SIG" \
+            --arg win_url "$URL_BASE/AI.CLI.Installer_${VERSION}_x64-setup.nsis.zip" \
+            --arg darwin_sig "$DARWIN_SIG" \
+            --arg darwin_url "$URL_BASE/AI.CLI.Installer.app.tar.gz" \
+            --arg linux_sig "$LINUX_SIG" \
+            --arg linux_url "$URL_BASE/AI.CLI.Installer_${VERSION}_amd64.AppImage" \
+            '{
+              version: $version,
+              notes: $notes,
+              pub_date: $pub_date,
+              platforms: {
+                "windows-x86_64": { signature: $win_sig, url: $win_url },
+                "darwin-aarch64": { signature: $darwin_sig, url: $darwin_url },
+                "linux-x86_64":   { signature: $linux_sig, url: $linux_url }
+              }
+            }' > latest.json
+
+          echo "=== latest.json ==="
+          cat latest.json
+
+          gh release upload "$TAG" latest.json --repo "$DIST_REPO" --clobber
+
   publish:
     name: Publish release
-    needs: [prepare, build]
+    needs: [prepare, build, generate-latest]
     runs-on: ubuntu-latest
     steps:
       - name: Mark release as non-draft
