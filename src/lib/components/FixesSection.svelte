@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { listFixes, applyFixes } from "../api";
+  import { listFixes, applyFixes, removeFixes, openPath } from "../api";
   import { open as openExternal } from "@tauri-apps/plugin-shell";
   import type { Fix } from "../types";
 
@@ -8,24 +8,47 @@
   let selected = $state<Set<string>>(new Set());
   let busy = $state(false);
   let message = $state<string | null>(null);
+  let touchedFiles = $state<string[]>([]);
   let error = $state<string | null>(null);
   let loadError = $state<string | null>(null);
+  let filter = $state<"all" | "configured" | "pending">("all");
 
   onMount(async () => {
+    await loadFixes();
+  });
+
+  async function loadFixes() {
     try {
       fixes = await listFixes();
+      selected = new Set(
+        [...selected].filter((id) =>
+          fixes.some((fix) => fix.id === id && !fix.configured)
+        )
+      );
     } catch (e) {
       loadError = e instanceof Error ? e.message : String(e);
     }
-  });
+  }
 
-  function toggle(id: string) {
+  function toggle(fix: Fix) {
+    if (fix.configured) return;
+    const id = fix.id;
     if (selected.has(id)) {
       selected.delete(id);
     } else {
       selected.add(id);
     }
     selected = new Set(selected); // trigger reactivity
+  }
+
+  function filteredFixes(): Fix[] {
+    if (filter === "configured") return fixes.filter((fix) => fix.configured);
+    if (filter === "pending") return fixes.filter((fix) => !fix.configured);
+    return fixes;
+  }
+
+  function configuredCount(): number {
+    return fixes.filter((fix) => fix.configured).length;
   }
 
   function targetLabel(target: string): string {
@@ -46,11 +69,32 @@
     busy = true;
     error = null;
     message = null;
+    touchedFiles = [];
     try {
       const ids = [...selected];
       const report = await applyFixes(ids);
-      message = `已应用 ${report.applied_count} 个修复，写入 ${report.touched_files.length} 个文件：\n${report.touched_files.join("\n")}`;
+      message = `已应用 ${report.applied_count} 个修复，写入 ${report.touched_files.length} 个文件`;
+      touchedFiles = report.touched_files;
       selected = new Set();
+      await loadFixes();
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function removeFix(fix: Fix) {
+    if (!fix.configured) return;
+    busy = true;
+    error = null;
+    message = null;
+    touchedFiles = [];
+    try {
+      const report = await removeFixes([fix.id]);
+      message = `已取消 ${report.removed_count} 项配置，写入 ${report.touched_files.length} 个文件`;
+      touchedFiles = report.touched_files;
+      await loadFixes();
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     } finally {
@@ -61,6 +105,13 @@
   async function openDoc(url: string | null) {
     if (!url) return;
     await openExternal(url).catch(() => {});
+  }
+
+  async function openFile(path: string) {
+    error = null;
+    await openPath(path).catch((e) => {
+      error = e instanceof Error ? e.message : String(e);
+    });
   }
 </script>
 
@@ -78,20 +129,53 @@
   {:else if fixes.length === 0}
     <div class="empty">加载中…</div>
   {:else}
+    <div class="filters">
+      <button class:active={filter === "all"} onclick={() => (filter = "all")}>
+        全部 {fixes.length}
+      </button>
+      <button class:active={filter === "configured"} onclick={() => (filter = "configured")}>
+        已配置 {configuredCount()}
+      </button>
+      <button class:active={filter === "pending"} onclick={() => (filter = "pending")}>
+        未配置 {fixes.length - configuredCount()}
+      </button>
+    </div>
+
     <ul class="list">
-      {#each fixes as fix (fix.id)}
-        <li class="item" class:checked={selected.has(fix.id)}>
+      {#each filteredFixes() as fix (fix.id)}
+        <li class="item" class:checked={selected.has(fix.id)} class:configured={fix.configured}>
           <label class="row">
             <input
               type="checkbox"
-              checked={selected.has(fix.id)}
-              onchange={() => toggle(fix.id)}
-              disabled={busy}
+              checked={fix.configured || selected.has(fix.id)}
+              onchange={() => toggle(fix)}
+              disabled={busy || fix.configured}
             />
             <div class="content">
               <div class="title">
-                <span class="code">{fix.code}</span>
-                <span>{fix.title}</span>
+                <div class="title-main">
+                  <span class="code">{fix.code}</span>
+                  <span>{fix.title}</span>
+                  {#if fix.configured}
+                    <span class="configured-badge">已配置</span>
+                  {:else if fix.total_patches > 0 && fix.configured_patches > 0}
+                    <span class="partial-badge">
+                      已配置 {fix.configured_patches}/{fix.total_patches}
+                    </span>
+                  {/if}
+                </div>
+                {#if fix.configured}
+                  <button
+                    class="remove-config"
+                    disabled={busy}
+                    onclick={(e) => {
+                      e.preventDefault();
+                      removeFix(fix);
+                    }}
+                  >
+                    取消配置
+                  </button>
+                {/if}
               </div>
               <p class="desc">{fix.description}</p>
               <div class="patches">
@@ -123,7 +207,20 @@
     </div>
   {/if}
 
-  {#if message}<div class="msg success">{message}</div>{/if}
+  {#if message}
+    <div class="msg success">
+      <div>{message}</div>
+      {#if touchedFiles.length > 0}
+        <div class="touched-files">
+          {#each touchedFiles as path}
+            <button class="file-link" onclick={() => openFile(path)} title={path}>
+              {path}
+            </button>
+          {/each}
+        </div>
+      {/if}
+    </div>
+  {/if}
   {#if error}<div class="msg error">{error}</div>{/if}
 </section>
 
@@ -148,6 +245,20 @@
     flex-direction: column;
     gap: 0.4rem;
   }
+  .filters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+  }
+  .filters button {
+    font-size: 0.78rem;
+    padding: 0.3rem 0.65rem;
+  }
+  .filters button.active {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: white;
+  }
   .item {
     border: 1px solid var(--border);
     border-radius: 6px;
@@ -157,6 +268,10 @@
   .item.checked {
     border-color: var(--accent);
     background: rgba(217, 119, 6, 0.05);
+  }
+  .item.configured {
+    border-color: rgba(22, 163, 74, 0.28);
+    background: rgba(22, 163, 74, 0.06);
   }
   .row {
     display: flex;
@@ -182,7 +297,15 @@
     font-weight: 500;
     display: flex;
     align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+  }
+  .title-main {
+    display: flex;
+    align-items: center;
     gap: 0.5rem;
+    flex-wrap: wrap;
+    min-width: 0;
   }
   .code {
     font-family: ui-monospace, Consolas, monospace;
@@ -191,6 +314,34 @@
     color: var(--text-muted);
     padding: 0.05rem 0.4rem;
     border-radius: 3px;
+  }
+  .configured-badge,
+  .partial-badge {
+    border-radius: 3px;
+    padding: 0.05rem 0.35rem;
+    font-size: 0.68rem;
+    font-weight: 600;
+  }
+  .configured-badge {
+    background: rgba(22, 163, 74, 0.14);
+    color: var(--success);
+  }
+  .partial-badge {
+    background: rgba(217, 119, 6, 0.14);
+    color: var(--warning);
+  }
+  .remove-config {
+    flex-shrink: 0;
+    padding: 0.18rem 0.45rem;
+    font-size: 0.72rem;
+    color: var(--warning);
+    border-color: rgba(217, 119, 6, 0.32);
+    background: rgba(217, 119, 6, 0.08);
+  }
+  .remove-config:hover:not(:disabled) {
+    color: white;
+    border-color: var(--accent);
+    background: var(--accent);
   }
   .desc {
     font-size: 0.78rem;
@@ -260,16 +411,38 @@
     padding: 0.5rem 0.75rem;
     border-radius: 4px;
     font-size: 0.85rem;
-    white-space: pre-wrap;
   }
   .msg.success {
     background: rgba(22, 163, 74, 0.1);
     color: var(--success);
   }
+  .touched-files {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    margin-top: 0.12rem;
+  }
+  .file-link {
+    align-self: flex-start;
+    max-width: 100%;
+    padding: 0;
+    border: none;
+    background: none;
+    color: var(--success);
+    font-family: ui-monospace, Consolas, monospace;
+    font-size: 0.76rem;
+    text-align: left;
+    word-break: break-all;
+  }
+  .file-link:hover:not(:disabled) {
+    text-decoration: underline;
+    border-color: transparent;
+  }
   .msg.error {
     background: rgba(220, 38, 38, 0.1);
     color: var(--error);
     word-break: break-word;
+    white-space: pre-wrap;
     font-family: ui-monospace, Consolas, monospace;
     font-size: 0.78rem;
   }

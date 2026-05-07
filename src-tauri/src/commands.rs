@@ -1,10 +1,12 @@
 use std::sync::Arc;
+use std::time::Duration;
 use tauri::{AppHandle, State};
 use tokio::sync::RwLock;
 
 use crate::env_manager::{self, PathScope, PathStatus};
 use crate::error::{AppError, Result};
-use crate::fixes::{self, ApplyReport, Fix};
+use crate::fixes::{self, ApplyReport, Fix, RemoveReport};
+use crate::install_diagnostics;
 use crate::mirrors::{self, MirrorList, MirrorProbe};
 use crate::npm_installer::{self, NodeInfo};
 use crate::presets::{self, ClaudePreset, ClaudeSettingsEnv};
@@ -45,16 +47,102 @@ impl AppState {
 }
 
 #[tauri::command]
-pub async fn list_tools(_state: State<'_, Arc<AppState>>) -> Result<Vec<ToolDescriptor>> {
+pub async fn list_tools(state: State<'_, Arc<AppState>>) -> Result<Vec<ToolDescriptor>> {
     let cc = ClaudeCode;
     let mut cd = cc.descriptor();
-    cd.installed_version = cc.detect_installed().await;
 
     let cx = CodexCli;
     let mut xd = cx.descriptor();
-    xd.installed_version = cx.detect_installed().await;
+
+    let (
+        cc_installed,
+        cc_latest,
+        cc_stable,
+        cc_installations,
+        cx_installed,
+        cx_latest,
+        cx_stable,
+        cx_installations,
+    ) = tokio::join!(
+        cc.detect_installed(),
+        channel_version(&state.client, &cc, "latest"),
+        channel_version(&state.client, &cc, "stable"),
+        install_diagnostics::diagnose(
+            "claude",
+            native_launcher_path(&cc, "claude"),
+            cc.launcher_dir(),
+            cc.npm_package(),
+        ),
+        cx.detect_installed(),
+        channel_version(&state.client, &cx, "latest"),
+        channel_version(&state.client, &cx, "stable"),
+        install_diagnostics::diagnose(
+            "codex",
+            native_launcher_path(&cx, "codex"),
+            cx.launcher_dir(),
+            cx.npm_package(),
+        )
+    );
+
+    cd.installed_version = cc_installed;
+    cd.latest_version = cc_latest;
+    cd.stable_version = cc_stable;
+    cd.installations = cc_installations;
+
+    xd.installed_version = cx_installed;
+    xd.latest_version = cx_latest;
+    xd.stable_version = cx_stable;
+    xd.installations = cx_installations;
 
     Ok(vec![cd, xd])
+}
+
+async fn channel_version<T: Tool>(
+    client: &reqwest::Client,
+    tool: &T,
+    channel: &str,
+) -> Option<String> {
+    let version = fetch_channel_version(client, tool, channel).await;
+    if version.is_some() || channel != "stable" {
+        return version;
+    }
+    fetch_channel_version(client, tool, "latest").await
+}
+
+async fn fetch_channel_version<T: Tool>(
+    client: &reqwest::Client,
+    tool: &T,
+    channel: &str,
+) -> Option<String> {
+    let mirrors = tool.mirror_list();
+    tokio::time::timeout(
+        Duration::from_secs(5),
+        mirrors::fetch_version(client, &mirrors, channel),
+    )
+    .await
+    .ok()
+    .and_then(|result| result.ok())
+    .map(|(_, version)| version)
+}
+
+fn native_launcher_path<T: Tool>(tool: &T, command_name: &str) -> Option<std::path::PathBuf> {
+    let file_name = if cfg!(target_os = "windows") {
+        format!("{}.exe", command_name)
+    } else {
+        command_name.to_string()
+    };
+    Some(tool.launcher_dir()?.join(file_name))
+}
+
+async fn install_channel<T: Tool>(client: &reqwest::Client, tool: &T, channel: String) -> String {
+    if channel != "stable"
+        || fetch_channel_version(client, tool, "stable")
+            .await
+            .is_some()
+    {
+        return channel;
+    }
+    "latest".to_string()
 }
 
 #[tauri::command]
@@ -76,17 +164,23 @@ pub async fn install_tool(
     channel: Option<String>,
     method: Option<InstallMethod>,
 ) -> Result<InstallReport> {
-    let channel = channel.unwrap_or_else(|| "latest".to_string());
+    let requested_channel = channel.unwrap_or_else(|| "latest".to_string());
     let method = method.unwrap_or_default();
     let client = state.client.clone();
     match tool_id.as_str() {
         ClaudeCode::ID => {
             let mirrors = ClaudeCode.mirror_list();
-            ClaudeCode.install(method, app, client, mirrors, channel).await
+            let channel = install_channel(&client, &ClaudeCode, requested_channel).await;
+            ClaudeCode
+                .install(method, app, client, mirrors, channel)
+                .await
         }
         CodexCli::ID => {
             let mirrors = CodexCli.mirror_list();
-            CodexCli.install(method, app, client, mirrors, channel).await
+            let channel = install_channel(&client, &CodexCli, requested_channel).await;
+            CodexCli
+                .install(method, app, client, mirrors, channel)
+                .await
         }
         other => Err(AppError::Other(format!("unknown tool: {}", other))),
     }
@@ -108,6 +202,49 @@ pub async fn apply_fixes(
     fix_ids: Vec<String>,
 ) -> Result<ApplyReport> {
     fixes::apply_selected(&state.client, &fix_ids).await
+}
+
+#[tauri::command]
+pub async fn remove_fixes(
+    state: State<'_, Arc<AppState>>,
+    fix_ids: Vec<String>,
+) -> Result<RemoveReport> {
+    fixes::remove_selected(&state.client, &fix_ids).await
+}
+
+#[tauri::command]
+pub async fn open_path(path: String) -> Result<()> {
+    let path = std::path::PathBuf::from(path);
+    if !path.exists() {
+        return Err(AppError::Other(format!(
+            "path not found: {}",
+            path.display()
+        )));
+    }
+
+    open_path_with_system(&path)
+}
+
+fn open_path_with_system(path: &std::path::Path) -> Result<()> {
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("explorer.exe")
+            .arg(path)
+            .spawn()?;
+        return Ok(());
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open").arg(path).spawn()?;
+        return Ok(());
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        std::process::Command::new("xdg-open").arg(path).spawn()?;
+        return Ok(());
+    }
 }
 
 #[tauri::command]

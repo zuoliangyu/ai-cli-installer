@@ -15,6 +15,7 @@ import type {
   NodeInfo,
   Fix,
   ApplyFixReport,
+  RemoveFixReport,
 } from "./types";
 
 export async function initApp(): Promise<void> {
@@ -56,6 +57,14 @@ export async function listFixes(): Promise<Fix[]> {
 
 export async function applyFixes(fixIds: string[]): Promise<ApplyFixReport> {
   return invoke<ApplyFixReport>("apply_fixes", { fixIds });
+}
+
+export async function removeFixes(fixIds: string[]): Promise<RemoveFixReport> {
+  return invoke<RemoveFixReport>("remove_fixes", { fixIds });
+}
+
+export async function openPath(path: string): Promise<void> {
+  await invoke<void>("open_path", { path });
 }
 
 export function onDownloadProgress(

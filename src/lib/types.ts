@@ -1,10 +1,22 @@
 export type InstallMethod = "native" | "npm";
+export type InstallationSource = "native" | "npm_global" | "path";
+
+export interface ToolInstallation {
+  source: InstallationSource;
+  version: string | null;
+  path: string | null;
+  current_path: boolean;
+  managed: boolean;
+}
 
 export interface ToolDescriptor {
   id: string;
   name: string;
   description: string;
   installed_version: string | null;
+  latest_version: string | null;
+  stable_version: string | null;
+  installations: ToolInstallation[];
   install_path: string | null;
   supports_npm: boolean;
   npm_package: string | null;
@@ -41,10 +53,18 @@ export interface Fix {
   description: string;
   doc_url: string | null;
   patches: FixPatch[];
+  configured: boolean;
+  configured_patches: number;
+  total_patches: number;
 }
 
 export interface ApplyFixReport {
   applied_count: number;
+  touched_files: string[];
+}
+
+export interface RemoveFixReport {
+  removed_count: number;
   touched_files: string[];
 }
 

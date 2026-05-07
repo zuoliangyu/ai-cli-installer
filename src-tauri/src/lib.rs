@@ -1,10 +1,12 @@
 use std::sync::Arc;
+use tauri::{Manager, PhysicalPosition, PhysicalSize};
 
 mod commands;
 mod downloader;
 mod env_manager;
 mod error;
 mod fixes;
+mod install_diagnostics;
 mod installer;
 mod mirrors;
 mod npm_installer;
@@ -18,8 +20,7 @@ mod verifier;
 pub fn run() {
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )
         .init();
 
@@ -29,6 +30,10 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(Arc::new(commands::AppState::new()))
+        .setup(|app| {
+            configure_main_window(app);
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             commands::list_tools,
             commands::list_mirrors,
@@ -43,7 +48,33 @@ pub fn run() {
             commands::detect_node,
             commands::list_fixes,
             commands::apply_fixes,
+            commands::remove_fixes,
+            commands::open_path,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+fn configure_main_window(app: &tauri::App) {
+    let Some(window) = app.get_webview_window("main") else {
+        return;
+    };
+    let monitor = window
+        .current_monitor()
+        .ok()
+        .flatten()
+        .or_else(|| window.primary_monitor().ok().flatten());
+    let Some(monitor) = monitor else {
+        return;
+    };
+
+    let monitor_size = monitor.size();
+    let monitor_position = monitor.position();
+    let width = ((monitor_size.width as f64) * 0.6).round().max(600.0) as u32;
+    let height = ((monitor_size.height as f64) * 0.6).round().max(480.0) as u32;
+
+    let _ = window.set_size(PhysicalSize::new(width, height));
+    let x = monitor_position.x + ((monitor_size.width.saturating_sub(width)) / 2) as i32;
+    let y = monitor_position.y + ((monitor_size.height.saturating_sub(height)) / 2) as i32;
+    let _ = window.set_position(PhysicalPosition::new(x, y));
 }
