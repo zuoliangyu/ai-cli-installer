@@ -26,6 +26,8 @@ jobs:
     outputs:
       tag: ${{ steps.resolve.outputs.tag }}
     steps:
+      - uses: actions/checkout@v4
+
       - name: Resolve tag
         id: resolve
         run: |
@@ -34,6 +36,32 @@ jobs:
           else
             echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
           fi
+
+      - name: Extract release notes from CHANGELOG
+        id: notes
+        run: |
+          TAG="${{ steps.resolve.outputs.tag }}"
+          VERSION="${TAG#v}"
+          # Extract the section between "## [VERSION]" and the next "## "
+          # (exclusive). Use string `index()` instead of regex — more portable
+          # across awk implementations (gawk warns on \[ \] escapes).
+          awk -v ver="$VERSION" '
+            /^## / {
+              if (capture) { exit }
+              if (index($0, "## [" ver "]") > 0) { capture=1; next }
+            }
+            capture { print }
+          ' CHANGELOG.md > /tmp/release-notes.md
+          # Trim leading blank lines
+          sed -i '/./,$!d' /tmp/release-notes.md
+          # Fallback to generic note if extraction yielded nothing
+          if [ ! -s /tmp/release-notes.md ]; then
+            echo "Automated build of $TAG. See CHANGELOG.md for details." > /tmp/release-notes.md
+            echo "fallback used (no [$VERSION] section in CHANGELOG)"
+          fi
+          echo "--- release notes ---"
+          cat /tmp/release-notes.md
+          echo "---------------------"
 
       - name: Create draft release (if not exists)
         env:
@@ -44,9 +72,14 @@ jobs:
             gh release create "$TAG" \
               --repo "${{ github.repository }}" \
               --title "$TAG" \
-              --notes "Automated build of $TAG. See CHANGELOG.md for details." \
+              --notes-file /tmp/release-notes.md \
               --target main \
               --draft
+          else
+            # Release already exists (re-run scenario) — refresh notes from CHANGELOG
+            gh release edit "$TAG" \
+              --repo "${{ github.repository }}" \
+              --notes-file /tmp/release-notes.md
           fi
 
   build:
