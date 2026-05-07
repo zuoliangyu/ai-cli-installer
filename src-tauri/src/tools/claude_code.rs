@@ -15,18 +15,13 @@ pub struct ClaudeCode;
 impl ClaudeCode {
     pub const ID: ToolId = "claude-code";
 
-    fn launcher_path() -> Option<PathBuf> {
-        let home = dirs::home_dir()?;
-        #[cfg(target_os = "windows")]
-        let path = home
-            .join("AppData")
-            .join("Local")
-            .join("Programs")
-            .join("claude")
-            .join("claude.exe");
-        #[cfg(not(target_os = "windows"))]
-        let path = home.join(".local").join("bin").join("claude");
-        Some(path)
+    fn launcher_path(&self) -> Option<PathBuf> {
+        let bin_name = if cfg!(target_os = "windows") {
+            "claude.exe"
+        } else {
+            "claude"
+        };
+        Some(self.launcher_dir()?.join(bin_name))
     }
 }
 
@@ -35,18 +30,24 @@ impl Tool for ClaudeCode {
         Self::ID
     }
 
+    /// Same dir on all three platforms — Claude Code uses Unix-style layout
+    /// even on Windows (`%USERPROFILE%\.local\bin\claude.exe`).
+    fn launcher_dir(&self) -> Option<PathBuf> {
+        Some(dirs::home_dir()?.join(".local").join("bin"))
+    }
+
     fn descriptor(&self) -> ToolDescriptor {
         ToolDescriptor {
             id: Self::ID.to_string(),
             name: "Claude Code".to_string(),
             description: "Anthropic 官方命令行工具".to_string(),
             installed_version: None,
-            install_path: Self::launcher_path().and_then(|p| p.to_str().map(String::from)),
+            install_path: self.launcher_path().and_then(|p| p.to_str().map(String::from)),
         }
     }
 
     async fn detect_installed(&self) -> Option<String> {
-        let p = Self::launcher_path()?;
+        let p = self.launcher_path()?;
         if !p.exists() {
             return None;
         }
@@ -141,7 +142,8 @@ impl Tool for ClaudeCode {
         // 6. cleanup bootstrap
         let _ = tokio::fs::remove_file(&dest).await;
 
-        let install_path = Self::launcher_path()
+        let install_path = self
+            .launcher_path()
             .and_then(|p| p.to_str().map(String::from))
             .unwrap_or_default();
 

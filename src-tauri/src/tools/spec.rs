@@ -1,4 +1,5 @@
 use serde::Serialize;
+use std::path::PathBuf;
 use tauri::AppHandle;
 
 use crate::error::Result;
@@ -31,6 +32,10 @@ pub trait Tool: Send + Sync {
     fn id(&self) -> ToolId;
 
     fn descriptor(&self) -> ToolDescriptor;
+
+    /// Directory the tool's launcher lives in — needs to be on PATH.
+    /// Returned path may not exist yet (e.g. before install).
+    fn launcher_dir(&self) -> Option<PathBuf>;
 
     async fn detect_installed(&self) -> Option<String>;
 

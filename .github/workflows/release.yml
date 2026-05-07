@@ -41,10 +41,14 @@ jobs:
           TAG="${{ steps.resolve.outputs.tag }}"
           # If a release for this tag already exists, just leave it; otherwise create draft.
           if ! gh release view "$TAG" --repo "$DIST_REPO" >/dev/null 2>&1; then
+            # --target main is required so the publish step's `--latest` can
+            # bind the tag to a real commit. Otherwise GH rejects with HTTP 422
+            # "Repository is empty" (or "tag_name is not a valid tag").
             gh release create "$TAG" \
               --repo "$DIST_REPO" \
               --title "$TAG" \
               --notes "Automated build of $TAG" \
+              --target main \
               --draft
           fi
 

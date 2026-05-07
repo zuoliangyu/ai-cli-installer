@@ -1,6 +1,6 @@
 [package]
 name = "ai-cli-installer"
-version = "0.0.1"
+version = "0.0.2"
 description = "One-click installer for Claude Code with mirror acceleration"
 authors = ["zuoliangyu"]
 edition = "2021"
@@ -32,6 +32,9 @@ dirs = "5"
 once_cell = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[target.'cfg(windows)'.dependencies]
+winreg = "0.52"
 
 [features]
 custom-protocol = ["tauri/custom-protocol"]

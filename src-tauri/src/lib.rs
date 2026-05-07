@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 mod commands;
 mod downloader;
+mod env_manager;
 mod error;
 mod installer;
 mod mirrors;
@@ -30,6 +31,9 @@ pub fn run() {
             commands::list_mirrors,
             commands::probe_mirrors,
             commands::install_tool,
+            commands::check_path_status,
+            commands::add_to_path,
+            commands::remove_from_path,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

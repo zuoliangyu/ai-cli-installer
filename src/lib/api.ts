@@ -7,6 +7,8 @@ import type {
   DownloadProgress,
   MirrorProbe,
   Channel,
+  PathStatus,
+  PathScope,
 } from "./types";
 
 export async function initApp(): Promise<void> {
@@ -41,4 +43,22 @@ export function onDownloadProgress(
   cb: (p: DownloadProgress) => void
 ): Promise<UnlistenFn> {
   return listen<DownloadProgress>("download-progress", (e) => cb(e.payload));
+}
+
+export async function checkPathStatus(toolId: string): Promise<PathStatus> {
+  return invoke<PathStatus>("check_path_status", { toolId });
+}
+
+export async function addToPath(
+  toolId: string,
+  scope: PathScope = "system"
+): Promise<void> {
+  await invoke<void>("add_to_path", { toolId, scope });
+}
+
+export async function removeFromPath(
+  toolId: string,
+  scope: PathScope = "system"
+): Promise<void> {
+  await invoke<void>("remove_from_path", { toolId, scope });
 }

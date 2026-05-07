@@ -1,7 +1,18 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
-  import { installTool, onDownloadProgress, refreshTools } from "../api";
-  import type { ToolDescriptor, DownloadProgress } from "../types";
+  import {
+    installTool,
+    onDownloadProgress,
+    refreshTools,
+    checkPathStatus,
+    addToPath,
+    removeFromPath,
+  } from "../api";
+  import type {
+    ToolDescriptor,
+    DownloadProgress,
+    PathStatus,
+  } from "../types";
   import ProgressBar from "./ProgressBar.svelte";
 
   interface Props {
@@ -10,9 +21,11 @@
   let { tool }: Props = $props();
 
   let busy = $state(false);
+  let pathBusy = $state(false);
   let progress = $state<DownloadProgress | null>(null);
   let message = $state<string | null>(null);
   let error = $state<string | null>(null);
+  let pathStatus = $state<PathStatus | null>(null);
   let unlisten: (() => void) | null = null;
 
   onMount(async () => {
@@ -21,11 +34,20 @@
         progress = p;
       }
     });
+    refreshPathStatus();
   });
 
   onDestroy(() => {
     unlisten?.();
   });
+
+  async function refreshPathStatus() {
+    try {
+      pathStatus = await checkPathStatus(tool.id);
+    } catch {
+      pathStatus = null;
+    }
+  }
 
   async function handleInstall(channel: "latest" | "stable" = "latest") {
     busy = true;
@@ -36,11 +58,42 @@
       const report = await installTool(tool.id, channel);
       message = `已安装 ${report.version} (${report.elapsed_secs}s)`;
       await refreshTools();
+      await refreshPathStatus();
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     } finally {
       busy = false;
       progress = null;
+    }
+  }
+
+  async function handleAddPath() {
+    pathBusy = true;
+    error = null;
+    message = null;
+    try {
+      await addToPath(tool.id, "system");
+      message = "已加入系统 PATH。请重启终端或新开窗口生效。";
+      await refreshPathStatus();
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+    } finally {
+      pathBusy = false;
+    }
+  }
+
+  async function handleRemovePath() {
+    pathBusy = true;
+    error = null;
+    message = null;
+    try {
+      await removeFromPath(tool.id, "system");
+      message = "已从系统 PATH 移除。";
+      await refreshPathStatus();
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+    } finally {
+      pathBusy = false;
     }
   }
 </script>
@@ -72,6 +125,32 @@
       total={progress.total}
       mirror={progress.mirror}
     />
+  {/if}
+
+  {#if pathStatus}
+    <div class="path-row">
+      <div class="path-label">
+        <span class="path-dir">{pathStatus.dir}</span>
+        {#if pathStatus.in_system_path}
+          <span class="badge ok">系统 PATH ✓</span>
+        {:else if pathStatus.in_user_path}
+          <span class="badge warn">仅用户 PATH</span>
+        {:else if pathStatus.effective}
+          <span class="badge warn">仅当前会话</span>
+        {:else}
+          <span class="badge err">未在 PATH</span>
+        {/if}
+      </div>
+      <div class="path-actions">
+        {#if pathStatus.in_system_path}
+          <button onclick={handleRemovePath} disabled={pathBusy}>移除</button>
+        {:else}
+          <button class="primary" onclick={handleAddPath} disabled={pathBusy}>
+            一键加入系统 PATH
+          </button>
+        {/if}
+      </div>
+    </div>
   {/if}
 
   {#if message}
@@ -128,6 +207,56 @@
   }
   .actions button {
     white-space: nowrap;
+  }
+  .path-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.5rem 0.75rem;
+    background: rgba(0, 0, 0, 0.03);
+    border-radius: 6px;
+    font-size: 0.85rem;
+  }
+  .path-label {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    min-width: 0;
+  }
+  .path-dir {
+    font-family: ui-monospace, "SF Mono", Consolas, monospace;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .badge {
+    display: inline-block;
+    padding: 0.1rem 0.4rem;
+    border-radius: 3px;
+    font-size: 0.7rem;
+    font-weight: 500;
+  }
+  .badge.ok {
+    background: rgba(22, 163, 74, 0.15);
+    color: var(--success);
+  }
+  .badge.warn {
+    background: rgba(217, 119, 6, 0.15);
+    color: var(--warning);
+  }
+  .badge.err {
+    background: rgba(220, 38, 38, 0.15);
+    color: var(--error);
+  }
+  .path-actions {
+    flex-shrink: 0;
+  }
+  .path-actions button {
+    font-size: 0.78rem;
+    padding: 0.3rem 0.6rem;
   }
   .msg {
     padding: 0.5rem 0.75rem;

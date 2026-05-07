@@ -4,6 +4,28 @@
 
 ## [Unreleased]
 
+## [0.0.2] - 2026-05-07
+
+### 新增
+
+- **PATH 管理**：工具卡片新增 PATH 状态行，区分「系统 PATH ✓ / 仅用户 PATH / 仅当前会话 / 未在 PATH」四档
+  - 一键加入系统 PATH（Windows 弹一次 UAC，提权 PowerShell 写 `HKLM\System\...\Environment\Path` + 广播 `WM_SETTINGCHANGE`）
+  - 一键移除（同样需要 UAC）
+  - 用户取消 UAC（exit code 1223）会展示明确错误提示
+- 三平台共用 `~/.local/bin` 作为 launcher 目录（Claude Code 在 Windows 上也是 Unix 风格布局）
+- 新 Tauri 命令：`check_path_status` / `add_to_path` / `remove_from_path`
+- Tool trait 加 `launcher_dir(&self)`，为后续多工具准备
+
+### 修复
+
+- **Windows 已安装版本检测**：v0.0.1 错误地查 `%LOCALAPPDATA%\Programs\claude\claude.exe`，实际路径是 `~\.local\bin\claude.exe`，导致 Claude Code 装着也显示「未安装」（不影响新装/更新）
+- `release.yml` 的 prepare 步骤加 `--target main`，防止 dist 仓库在「无 main 分支」状态下 publish 失败（HTTP 422 "Repository is empty"）
+
+### 已知限制
+
+- macOS / Linux 的「系统 PATH」（`/etc/profile.d/`）写入需要 sudo，v0.0.2 在这两个平台 fallback 到用户 rc 文件（`~/.bashrc`/`~/.zshrc`/`~/.profile`）。系统级写入留给 v0.0.3
+- Windows 用户首次 UAC 弹窗后，必须开新终端窗口才能看到 PATH 生效（已知 Windows 限制，已在 UI 提示）
+
 ## [0.0.1] - 2026-05-07
 
 首次发版。

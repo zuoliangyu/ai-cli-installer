@@ -28,3 +28,12 @@ export interface MirrorProbe {
 }
 
 export type Channel = "latest" | "stable" | string;
+
+export interface PathStatus {
+  dir: string;
+  in_user_path: boolean;
+  in_system_path: boolean;
+  effective: boolean;
+}
+
+export type PathScope = "system" | "user";

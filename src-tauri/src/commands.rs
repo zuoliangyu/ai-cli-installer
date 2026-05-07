@@ -2,9 +2,20 @@ use std::sync::Arc;
 use tauri::{AppHandle, State};
 use tokio::sync::RwLock;
 
-use crate::error::Result;
+use crate::env_manager::{self, PathScope, PathStatus};
+use crate::error::{AppError, Result};
 use crate::mirrors::{self, MirrorList, MirrorProbe};
 use crate::tools::{claude_code::ClaudeCode, InstallReport, Tool, ToolDescriptor};
+
+/// Resolve a tool_id to its launcher dir, or return Other error.
+fn launcher_dir_for(tool_id: &str) -> Result<std::path::PathBuf> {
+    match tool_id {
+        ClaudeCode::ID => ClaudeCode
+            .launcher_dir()
+            .ok_or_else(|| AppError::Other("home dir not available".into())),
+        other => Err(AppError::Other(format!("unknown tool: {}", other))),
+    }
+}
 
 pub struct AppState {
     pub client: reqwest::Client,
@@ -59,9 +70,34 @@ pub async fn install_tool(
                 .install(app, state.client.clone(), mirrors, channel)
                 .await
         }
-        other => Err(crate::error::AppError::Other(format!(
-            "unknown tool: {}",
-            other
-        ))),
+        other => Err(AppError::Other(format!("unknown tool: {}", other))),
     }
+}
+
+#[tauri::command]
+pub async fn check_path_status(tool_id: String) -> Result<PathStatus> {
+    let dir = launcher_dir_for(&tool_id)?;
+    env_manager::status(&dir).await
+}
+
+#[tauri::command]
+pub async fn add_to_path(tool_id: String, scope: Option<String>) -> Result<()> {
+    let dir = launcher_dir_for(&tool_id)?;
+    let scope = parse_scope(scope.as_deref())?;
+    env_manager::add(&dir, scope).await
+}
+
+#[tauri::command]
+pub async fn remove_from_path(tool_id: String, scope: Option<String>) -> Result<()> {
+    let dir = launcher_dir_for(&tool_id)?;
+    let scope = parse_scope(scope.as_deref())?;
+    env_manager::remove(&dir, scope).await
+}
+
+fn parse_scope(s: Option<&str>) -> Result<PathScope> {
+    Ok(match s.unwrap_or("system") {
+        "system" => PathScope::System,
+        "user" => PathScope::User,
+        other => return Err(AppError::Other(format!("unknown scope: {}", other))),
+    })
 }
