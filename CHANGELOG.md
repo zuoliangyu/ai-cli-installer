@@ -4,6 +4,17 @@
 
 ## [Unreleased]
 
+## [0.0.4] - 2026-05-07
+
+### 修复
+
+- v0.0.3 的「Upload Windows updater bundles」步骤用 `shopt -s nullglob` + bash glob，在 Windows git-bash runner 上未匹配到 `.nsis.zip` / `.msi.zip` 文件，导致这些文件没上传、`latest.json` 里 Windows signature 为空、Windows 用户实际上无法自动更新
+- 改用 `find` 显式查找，匹配失败时打印 bundle 目录内容并 exit 1（之前是静默通过）
+
+### 影响
+
+- Windows 用户从 v0.0.1/v0.0.2/v0.0.3 任一版本启动 app，updater 应该能正确识别 v0.0.4 并提示更新（v0.0.3 latest.json 的 Windows 字段虽然空，但 GH `releases/latest/download/latest.json` 已被 v0.0.4 覆盖）
+
 ## [0.0.3] - 2026-05-07
 
 ### 修复

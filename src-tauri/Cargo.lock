@@ -19,7 +19,7 @@ dependencies = [
 
 [[package]]
 name = "ai-cli-installer"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "dirs 5.0.1",
  "futures-util",
