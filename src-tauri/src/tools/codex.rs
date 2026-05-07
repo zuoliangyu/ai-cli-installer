@@ -175,6 +175,7 @@ impl Tool for CodexCli {
             installed_version: None,
             latest_version: None,
             stable_version: None,
+            stable_falls_back_to_latest: false,
             installations: Vec::new(),
             install_path: self
                 .launcher_path()

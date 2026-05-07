@@ -65,8 +65,8 @@ pub async fn list_tools(state: State<'_, Arc<AppState>>) -> Result<Vec<ToolDescr
         cx_installations,
     ) = tokio::join!(
         cc.detect_installed(),
-        channel_version(&state.client, &cc, "latest"),
-        channel_version(&state.client, &cc, "stable"),
+        fetch_channel_version(&state.client, &cc, "latest"),
+        fetch_channel_version(&state.client, &cc, "stable"),
         install_diagnostics::diagnose(
             "claude",
             native_launcher_path(&cc, "claude"),
@@ -74,8 +74,8 @@ pub async fn list_tools(state: State<'_, Arc<AppState>>) -> Result<Vec<ToolDescr
             cc.npm_package(),
         ),
         cx.detect_installed(),
-        channel_version(&state.client, &cx, "latest"),
-        channel_version(&state.client, &cx, "stable"),
+        fetch_channel_version(&state.client, &cx, "latest"),
+        fetch_channel_version(&state.client, &cx, "stable"),
         install_diagnostics::diagnose(
             "codex",
             native_launcher_path(&cx, "codex"),
@@ -84,29 +84,32 @@ pub async fn list_tools(state: State<'_, Arc<AppState>>) -> Result<Vec<ToolDescr
         )
     );
 
+    let (cc_stable, cc_falls_back) = resolve_stable(cc_stable, &cc_latest);
+    let (cx_stable, cx_falls_back) = resolve_stable(cx_stable, &cx_latest);
+
     cd.installed_version = cc_installed;
     cd.latest_version = cc_latest;
     cd.stable_version = cc_stable;
+    cd.stable_falls_back_to_latest = cc_falls_back;
     cd.installations = cc_installations;
 
     xd.installed_version = cx_installed;
     xd.latest_version = cx_latest;
     xd.stable_version = cx_stable;
+    xd.stable_falls_back_to_latest = cx_falls_back;
     xd.installations = cx_installations;
 
     Ok(vec![cd, xd])
 }
 
-async fn channel_version<T: Tool>(
-    client: &reqwest::Client,
-    tool: &T,
-    channel: &str,
-) -> Option<String> {
-    let version = fetch_channel_version(client, tool, channel).await;
-    if version.is_some() || channel != "stable" {
-        return version;
+fn resolve_stable(
+    stable: Option<String>,
+    latest: &Option<String>,
+) -> (Option<String>, bool) {
+    match stable {
+        Some(v) => (Some(v), false),
+        None => (latest.clone(), latest.is_some()),
     }
-    fetch_channel_version(client, tool, "latest").await
 }
 
 async fn fetch_channel_version<T: Tool>(
@@ -214,21 +217,46 @@ pub async fn remove_fixes(
 
 #[tauri::command]
 pub async fn open_path(path: String) -> Result<()> {
-    let path = std::path::PathBuf::from(path);
-    if !path.exists() {
+    let raw = std::path::PathBuf::from(path);
+    let canonical = raw
+        .canonicalize()
+        .map_err(|e| AppError::Other(format!("path not found: {} ({})", raw.display(), e)))?;
+
+    let metadata = std::fs::metadata(&canonical)
+        .map_err(|e| AppError::Other(format!("stat {}: {}", canonical.display(), e)))?;
+    if !metadata.is_file() {
         return Err(AppError::Other(format!(
-            "path not found: {}",
-            path.display()
+            "refusing to open non-file path: {}",
+            canonical.display()
         )));
     }
 
-    open_path_with_system(&path)
+    // Whitelist: we only write JSON config files in `apply_fixes`/`remove_fixes`,
+    // so the only legitimate clicks from the UI target `.json` files. Reject
+    // anything else to limit blast radius if a malicious frontend tried to
+    // launch arbitrary handlers (.lnk, .url, .bat, etc.).
+    let ext_ok = canonical
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("json"));
+    if !ext_ok {
+        return Err(AppError::Other(format!(
+            "refusing to open non-json path: {}",
+            canonical.display()
+        )));
+    }
+
+    open_path_with_system(&canonical)
 }
 
 fn open_path_with_system(path: &std::path::Path) -> Result<()> {
     #[cfg(target_os = "windows")]
     {
-        std::process::Command::new("explorer.exe")
+        // `cmd /c start "" "<path>"` opens with the default associated app
+        // (usually a JSON editor). Plain `explorer.exe <file>` is unreliable —
+        // for files it sometimes opens the parent folder instead.
+        std::process::Command::new("cmd")
+            .args(["/c", "start", ""])
             .arg(path)
             .spawn()?;
         return Ok(());

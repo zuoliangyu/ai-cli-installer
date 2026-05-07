@@ -104,6 +104,11 @@
 
   function channelLabel(channel: "latest" | "stable", version: string | null): string {
     const action = tool.installed_version ? "更新到" : "安装";
+    if (channel === "stable" && tool.stable_falls_back_to_latest) {
+      return version
+        ? `${action} stable (跟随 latest v${version})`
+        : `${action} stable (跟随 latest)`;
+    }
     return version ? `${action} ${channel} v${version}` : `${action} ${channel}`;
   }
 

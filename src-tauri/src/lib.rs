@@ -56,6 +56,15 @@ pub fn run() {
 }
 
 fn configure_main_window(app: &tauri::App) {
+    // Only auto-size and center on the very first launch. Subsequent launches
+    // respect whatever size/position the user (or Tauri's saved state) chose.
+    let marker = first_run_marker_path(app);
+    if let Some(ref path) = marker {
+        if path.exists() {
+            return;
+        }
+    }
+
     let Some(window) = app.get_webview_window("main") else {
         return;
     };
@@ -77,4 +86,15 @@ fn configure_main_window(app: &tauri::App) {
     let x = monitor_position.x + ((monitor_size.width.saturating_sub(width)) / 2) as i32;
     let y = monitor_position.y + ((monitor_size.height.saturating_sub(height)) / 2) as i32;
     let _ = window.set_position(PhysicalPosition::new(x, y));
+
+    if let Some(path) = marker {
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let _ = std::fs::write(&path, b"");
+    }
+}
+
+fn first_run_marker_path(app: &tauri::App) -> Option<std::path::PathBuf> {
+    app.path().app_config_dir().ok().map(|dir| dir.join(".window_initialized"))
 }

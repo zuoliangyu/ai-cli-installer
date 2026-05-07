@@ -31,6 +31,11 @@ pub struct ToolDescriptor {
     pub installed_version: Option<String>,
     pub latest_version: Option<String>,
     pub stable_version: Option<String>,
+    /// True when `stable_version` is actually the resolved `latest` value
+    /// because the mirror has no separate stable channel pointer. UI should
+    /// label the stable button accordingly so the version number isn't
+    /// misattributed.
+    pub stable_falls_back_to_latest: bool,
     pub installations: Vec<ToolInstallation>,
     pub install_path: Option<String>,
     /// True if this tool can be installed via npm. UI surfaces the toggle.

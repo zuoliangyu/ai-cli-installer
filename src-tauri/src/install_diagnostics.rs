@@ -191,7 +191,23 @@ fn escape_json_pointer(value: &str) -> String {
 }
 
 fn path_starts_with(path: &str, dir: &Path) -> bool {
-    Path::new(path).starts_with(dir)
+    let path = Path::new(path);
+    if cfg!(target_os = "windows") {
+        let mut path_components = path.components();
+        for dir_component in dir.components() {
+            let Some(path_component) = path_components.next() else {
+                return false;
+            };
+            let dir_str = dir_component.as_os_str().to_string_lossy();
+            let path_str = path_component.as_os_str().to_string_lossy();
+            if !dir_str.eq_ignore_ascii_case(&path_str) {
+                return false;
+            }
+        }
+        true
+    } else {
+        path.starts_with(dir)
+    }
 }
 
 fn same_path(a: &str, b: &str) -> bool {
@@ -204,7 +220,47 @@ fn same_path(a: &str, b: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_version;
+    use super::{parse_version, path_starts_with};
+    use std::path::Path;
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn path_starts_with_is_case_insensitive_on_windows() {
+        assert!(path_starts_with(
+            r"C:\Users\Alice\AppData\Local\app\bin\claude.exe",
+            Path::new(r"c:\users\alice\appdata\local\app"),
+        ));
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn path_starts_with_uses_byte_comparison_on_unix() {
+        assert!(path_starts_with(
+            "/home/alice/.local/share/app/bin/claude",
+            Path::new("/home/alice/.local/share/app"),
+        ));
+        assert!(!path_starts_with(
+            "/home/Alice/.local/share/app/bin/claude",
+            Path::new("/home/alice/.local/share/app"),
+        ));
+    }
+
+    #[test]
+    fn path_starts_with_rejects_unrelated_path() {
+        assert!(!path_starts_with(
+            if cfg!(target_os = "windows") {
+                r"C:\other\path\claude.exe"
+            } else {
+                "/other/path/claude"
+            },
+            Path::new(if cfg!(target_os = "windows") {
+                r"C:\app"
+            } else {
+                "/app"
+            }),
+        ));
+    }
+
 
     #[test]
     fn parses_claude_version() {

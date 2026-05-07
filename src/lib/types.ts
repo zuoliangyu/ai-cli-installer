@@ -16,6 +16,7 @@ export interface ToolDescriptor {
   installed_version: string | null;
   latest_version: string | null;
   stable_version: string | null;
+  stable_falls_back_to_latest: boolean;
   installations: ToolInstallation[];
   install_path: string | null;
   supports_npm: boolean;
