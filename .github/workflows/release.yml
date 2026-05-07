@@ -15,6 +15,10 @@ concurrency:
   group: release-${{ github.ref || github.event.inputs.tag }}
   cancel-in-progress: false
 
+# GITHUB_TOKEN needs explicit write permission for `gh release` to work.
+permissions:
+  contents: write
+
 jobs:
   prepare:
     name: Prepare draft release
