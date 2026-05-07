@@ -106,15 +106,16 @@ jobs:
         run: |
           TAG="${{ needs.prepare.outputs.tag }}"
           PATHS='${{ steps.tauri.outputs.artifactPaths }}'
-          echo "$PATHS" | jq -r '.[]' | while IFS= read -r f; do
+          # tr -d '\r' is critical on Windows runners (git-bash) — jq output
+          # passing through pipes inherits CRLF, and `read -r` does not strip CR.
+          echo "$PATHS" | jq -r '.[]' | tr -d '\r' | while IFS= read -r f; do
             # Skip macOS .app bundles — they're directories, not single files.
             # The corresponding .app.tar.gz is the actual updater artifact.
             if [ -d "$f" ]; then
               echo "skip dir: $f"
               continue
             fi
-            # On Windows runners (git-bash), gh CLI mis-globs backslash paths.
-            # Convert to forward slashes — gh accepts both on Windows.
+            # Normalize Windows backslashes — gh CLI accepts forward slashes on Win.
             f="${f//\\//}"
             echo "uploading: $f"
             gh release upload "$TAG" "$f" --repo "$DIST_REPO" --clobber
