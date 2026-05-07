@@ -1,0 +1,13 @@
+* text=auto
+
+# Force LF for files that must keep Unix line endings
+*.sh text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+
+# Binary assets — never touch
+*.png binary
+*.ico binary
+*.icns binary
+*.jpg binary
+*.jpeg binary

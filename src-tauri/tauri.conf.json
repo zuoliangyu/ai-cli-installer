@@ -1,0 +1,52 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "AI CLI Installer",
+  "version": "0.2.0",
+  "identifier": "com.zuoliangyu.aicliinstaller",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:1420",
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "AI CLI Installer",
+        "width": 800,
+        "height": 600,
+        "minWidth": 600,
+        "minHeight": 480,
+        "resizable": true,
+        "fullscreen": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "category": "DeveloperTool",
+    "shortDescription": "Claude Code 一键安装器",
+    "longDescription": "为 Claude Code 提供镜像加速下载与一键安装的桌面工具",
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "active": true,
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDkxMzFGQjdBNEU0ODJFNwpSV1RuZ3VTa3R4OFRDZnNQMFVuVzRlR09oYjZneGZzdTZOejk2L25LT2lxdjlSeEtoQ2M0T3dCcgo=",
+      "endpoints": [
+        "https://github.com/zuoliangyu/ai-cli-installer-dist/releases/latest/download/latest.json"
+      ]
+    }
+  }
+}
