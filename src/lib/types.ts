@@ -1,9 +1,14 @@
+export type InstallMethod = "native" | "npm";
+
 export interface ToolDescriptor {
   id: string;
   name: string;
   description: string;
   installed_version: string | null;
   install_path: string | null;
+  supports_npm: boolean;
+  npm_package: string | null;
+  npm_min_node: number | null;
 }
 
 export interface InstallReport {
@@ -11,6 +16,13 @@ export interface InstallReport {
   version: string;
   install_path: string;
   elapsed_secs: number;
+  method: InstallMethod;
+}
+
+export interface NodeInfo {
+  node_version: string;
+  node_major: number;
+  npm_version: string | null;
 }
 
 export interface DownloadProgress {

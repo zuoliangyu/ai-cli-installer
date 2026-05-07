@@ -6,14 +6,16 @@ use crate::downloader;
 use crate::error::{AppError, Result};
 use crate::installer;
 use crate::mirrors::{self, MirrorList};
+use crate::npm_installer;
 use crate::platform;
-use crate::tools::{InstallReport, Tool, ToolDescriptor, ToolId};
+use crate::tools::{InstallMethod, InstallReport, Tool, ToolDescriptor, ToolId};
 use crate::verifier;
 
 pub struct CodexCli;
 
 impl CodexCli {
     pub const ID: ToolId = "codex-cli";
+    pub const NPM_PACKAGE: &'static str = "@openai/codex";
 
     fn launcher_path(&self) -> Option<PathBuf> {
         let bin_name = if cfg!(target_os = "windows") {
@@ -23,69 +25,20 @@ impl CodexCli {
         };
         Some(self.launcher_dir()?.join(bin_name))
     }
-}
 
-impl Tool for CodexCli {
-    fn id(&self) -> ToolId {
-        Self::ID
-    }
-
-    fn launcher_dir(&self) -> Option<PathBuf> {
-        // Same convention as Codex's official install.sh: ~/.local/bin
-        Some(dirs::home_dir()?.join(".local").join("bin"))
-    }
-
-    fn mirror_list(&self) -> MirrorList {
-        // Codex doesn't have a stable upstream URL we can mirror format —
-        // we go GitHub-Releases-only via codex-mirror.
-        MirrorList::builtin_for("codex-mirror", false)
-    }
-
-    fn descriptor(&self) -> ToolDescriptor {
-        ToolDescriptor {
-            id: Self::ID.to_string(),
-            name: "Codex".to_string(),
-            description: "OpenAI 官方命令行编码代理".to_string(),
-            installed_version: None,
-            install_path: self.launcher_path().and_then(|p| p.to_str().map(String::from)),
-        }
-    }
-
-    async fn detect_installed(&self) -> Option<String> {
-        let p = self.launcher_path()?;
-        if !p.exists() {
-            return None;
-        }
-        let output = tokio::process::Command::new(&p)
-            .arg("--version")
-            .output()
-            .await
-            .ok()?;
-        if !output.status.success() {
-            return None;
-        }
-        let s = String::from_utf8_lossy(&output.stdout).to_string();
-        // codex --version output: "codex-cli 0.128.0" or similar
-        s.split_whitespace()
-            .find(|w| w.chars().next().map_or(false, |c| c.is_ascii_digit()))
-            .map(String::from)
-    }
-
-    async fn install(
+    async fn install_native(
         &self,
         app: AppHandle,
         client: reqwest::Client,
         mirrors: MirrorList,
         channel: String,
+        started: Instant,
     ) -> Result<InstallReport> {
-        let started = Instant::now();
         let plat = platform::current()?;
 
-        // 1. version
-        let (_chosen, version) = mirrors::fetch_version(&client, &mirrors, &channel).await?;
+        let (_, version) = mirrors::fetch_version(&client, &mirrors, &channel).await?;
         tracing::info!("codex resolved {} -> {}", channel, version);
 
-        // 2. manifest
         let (_, manifest) = mirrors::fetch_manifest(&client, &mirrors, &version).await?;
         let entry = manifest
             .platforms
@@ -93,7 +46,6 @@ impl Tool for CodexCli {
             .ok_or_else(|| AppError::ManifestMissingPlatform(plat.to_string()))?
             .clone();
 
-        // 3. download .zst
         let staging = installer::staging_dir()?;
         tokio::fs::create_dir_all(&staging).await?;
         let zst_dest = staging.join(format!("codex-{}-{}", version, plat));
@@ -125,10 +77,8 @@ impl Tool for CodexCli {
             return Err(AppError::AllMirrorsFailed);
         }
 
-        // 4. checksum (against the .zst, which is what the manifest hashes)
         verifier::verify(&zst_dest, &entry.checksum).await?;
 
-        // 5. zstd decompress → final binary
         let runtime_name = entry.runtime_filename();
         let dest_dir = self
             .launcher_dir()
@@ -137,35 +87,134 @@ impl Tool for CodexCli {
         let final_path = dest_dir.join(runtime_name);
 
         decompress_zst(&zst_dest, &final_path)?;
-
-        // 6. chmod +x (Unix) — Codex's binary is the standalone executable
         installer::make_executable(&final_path).await?;
-
-        // 7. cleanup the .zst
         let _ = tokio::fs::remove_file(&zst_dest).await;
 
-        let install_path = final_path.to_string_lossy().to_string();
+        Ok(InstallReport {
+            tool_id: Self::ID.to_string(),
+            version,
+            install_path: final_path.to_string_lossy().to_string(),
+            elapsed_secs: started.elapsed().as_secs(),
+            method: InstallMethod::Native,
+        })
+    }
+
+    async fn install_npm(&self, started: Instant) -> Result<InstallReport> {
+        let info = npm_installer::detect_node().await?;
+        let min = self.npm_min_node();
+        if info.node_major < min {
+            return Err(AppError::Other(format!(
+                "Codex 通过 npm 安装需要 Node.js {}+，当前是 {}。请升级 Node。",
+                min, info.node_version
+            )));
+        }
+        npm_installer::install_global(Self::NPM_PACKAGE, None).await?;
+
+        let version = self
+            .detect_installed()
+            .await
+            .unwrap_or_else(|| "(unknown)".into());
+        let install_path = npm_installer::npm_global_bin().await.unwrap_or_default();
+
         Ok(InstallReport {
             tool_id: Self::ID.to_string(),
             version,
             install_path,
             elapsed_secs: started.elapsed().as_secs(),
+            method: InstallMethod::Npm,
         })
     }
+}
+
+impl Tool for CodexCli {
+    fn id(&self) -> ToolId {
+        Self::ID
+    }
+
+    fn launcher_dir(&self) -> Option<PathBuf> {
+        Some(dirs::home_dir()?.join(".local").join("bin"))
+    }
+
+    fn mirror_list(&self) -> MirrorList {
+        MirrorList::builtin_for("codex-mirror", false)
+    }
+
+    fn npm_package(&self) -> Option<&'static str> {
+        Some(Self::NPM_PACKAGE)
+    }
+
+    fn npm_min_node(&self) -> u32 {
+        16
+    }
+
+    fn descriptor(&self) -> ToolDescriptor {
+        ToolDescriptor {
+            id: Self::ID.to_string(),
+            name: "Codex".to_string(),
+            description: "OpenAI 官方命令行编码代理".to_string(),
+            installed_version: None,
+            install_path: self.launcher_path().and_then(|p| p.to_str().map(String::from)),
+            supports_npm: true,
+            npm_package: Some(Self::NPM_PACKAGE.to_string()),
+            npm_min_node: Some(self.npm_min_node()),
+        }
+    }
+
+    async fn detect_installed(&self) -> Option<String> {
+        if let Some(p) = self.launcher_path() {
+            if p.exists() {
+                if let Some(v) = run_version(&p).await {
+                    return Some(v);
+                }
+            }
+        }
+        run_version(std::path::Path::new("codex")).await
+    }
+
+    async fn install(
+        &self,
+        method: InstallMethod,
+        app: AppHandle,
+        client: reqwest::Client,
+        mirrors: MirrorList,
+        channel: String,
+    ) -> Result<InstallReport> {
+        let started = Instant::now();
+        match method {
+            InstallMethod::Native => {
+                self.install_native(app, client, mirrors, channel, started).await
+            }
+            InstallMethod::Npm => self.install_npm(started).await,
+        }
+    }
+}
+
+async fn run_version(path: &std::path::Path) -> Option<String> {
+    let output = tokio::process::Command::new(path)
+        .arg("--version")
+        .output()
+        .await
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let s = String::from_utf8_lossy(&output.stdout).to_string();
+    // Format examples: "codex-cli 0.128.0" or "0.128.0"
+    s.split_whitespace()
+        .find(|w| w.chars().next().is_some_and(|c| c.is_ascii_digit()))
+        .map(String::from)
 }
 
 fn decompress_zst(src: &std::path::Path, dst: &std::path::Path) -> Result<()> {
     use std::fs::File;
     use std::io;
 
-    let input = File::open(src)
-        .map_err(|e| AppError::Other(format!("open {}: {}", src.display(), e)))?;
-    let mut decoder = zstd::stream::Decoder::new(input)
-        .map_err(|e| AppError::Other(format!("zstd init: {}", e)))?;
-
+    let input =
+        File::open(src).map_err(|e| AppError::Other(format!("open {}: {}", src.display(), e)))?;
+    let mut decoder =
+        zstd::stream::Decoder::new(input).map_err(|e| AppError::Other(format!("zstd init: {}", e)))?;
     let mut output = File::create(dst)
         .map_err(|e| AppError::Other(format!("create {}: {}", dst.display(), e)))?;
-
     io::copy(&mut decoder, &mut output)
         .map_err(|e| AppError::Other(format!("zstd copy: {}", e)))?;
     Ok(())

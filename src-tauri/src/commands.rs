@@ -5,9 +5,10 @@ use tokio::sync::RwLock;
 use crate::env_manager::{self, PathScope, PathStatus};
 use crate::error::{AppError, Result};
 use crate::mirrors::{self, MirrorList, MirrorProbe};
+use crate::npm_installer::{self, NodeInfo};
 use crate::presets::{self, ClaudePreset, ClaudeSettingsEnv};
 use crate::tools::{
-    claude_code::ClaudeCode, codex::CodexCli, InstallReport, Tool, ToolDescriptor,
+    claude_code::ClaudeCode, codex::CodexCli, InstallMethod, InstallReport, Tool, ToolDescriptor,
 };
 
 /// Resolve a tool_id to its launcher dir.
@@ -72,20 +73,27 @@ pub async fn install_tool(
     state: State<'_, Arc<AppState>>,
     tool_id: String,
     channel: Option<String>,
+    method: Option<InstallMethod>,
 ) -> Result<InstallReport> {
     let channel = channel.unwrap_or_else(|| "latest".to_string());
+    let method = method.unwrap_or_default();
     let client = state.client.clone();
     match tool_id.as_str() {
         ClaudeCode::ID => {
             let mirrors = ClaudeCode.mirror_list();
-            ClaudeCode.install(app, client, mirrors, channel).await
+            ClaudeCode.install(method, app, client, mirrors, channel).await
         }
         CodexCli::ID => {
             let mirrors = CodexCli.mirror_list();
-            CodexCli.install(app, client, mirrors, channel).await
+            CodexCli.install(method, app, client, mirrors, channel).await
         }
         other => Err(AppError::Other(format!("unknown tool: {}", other))),
     }
+}
+
+#[tauri::command]
+pub async fn detect_node() -> Result<NodeInfo> {
+    npm_installer::detect_node().await
 }
 
 #[tauri::command]

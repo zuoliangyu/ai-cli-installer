@@ -6,14 +6,16 @@ use crate::downloader;
 use crate::error::{AppError, Result};
 use crate::installer;
 use crate::mirrors::{self, MirrorList};
+use crate::npm_installer;
 use crate::platform;
-use crate::tools::{InstallReport, Tool, ToolDescriptor, ToolId};
+use crate::tools::{InstallMethod, InstallReport, Tool, ToolDescriptor, ToolId};
 use crate::verifier;
 
 pub struct ClaudeCode;
 
 impl ClaudeCode {
     pub const ID: ToolId = "claude-code";
+    pub const NPM_PACKAGE: &'static str = "@anthropic-ai/claude-code";
 
     fn launcher_path(&self) -> Option<PathBuf> {
         let bin_name = if cfg!(target_os = "windows") {
@@ -23,62 +25,20 @@ impl ClaudeCode {
         };
         Some(self.launcher_dir()?.join(bin_name))
     }
-}
 
-impl Tool for ClaudeCode {
-    fn id(&self) -> ToolId {
-        Self::ID
-    }
-
-    /// Same dir on all three platforms — Claude Code uses Unix-style layout
-    /// even on Windows (`%USERPROFILE%\.local\bin\claude.exe`).
-    fn launcher_dir(&self) -> Option<PathBuf> {
-        Some(dirs::home_dir()?.join(".local").join("bin"))
-    }
-
-    fn descriptor(&self) -> ToolDescriptor {
-        ToolDescriptor {
-            id: Self::ID.to_string(),
-            name: "Claude Code".to_string(),
-            description: "Anthropic 官方命令行工具".to_string(),
-            installed_version: None,
-            install_path: self.launcher_path().and_then(|p| p.to_str().map(String::from)),
-        }
-    }
-
-    async fn detect_installed(&self) -> Option<String> {
-        let p = self.launcher_path()?;
-        if !p.exists() {
-            return None;
-        }
-        let output = tokio::process::Command::new(&p)
-            .arg("--version")
-            .output()
-            .await
-            .ok()?;
-        if !output.status.success() {
-            return None;
-        }
-        let s = String::from_utf8_lossy(&output.stdout).to_string();
-        // expected format: "2.1.132 (Claude Code)"
-        s.split_whitespace().next().map(|s| s.to_string())
-    }
-
-    async fn install(
+    async fn install_native(
         &self,
         app: AppHandle,
         client: reqwest::Client,
         mirrors: MirrorList,
         channel: String,
+        started: Instant,
     ) -> Result<InstallReport> {
-        let started = Instant::now();
         let plat = platform::current()?;
 
-        // 1. resolve version through mirror chain
-        let (_chosen_mirror, version) = mirrors::fetch_version(&client, &mirrors, &channel).await?;
+        let (_, version) = mirrors::fetch_version(&client, &mirrors, &channel).await?;
         tracing::info!("resolved {} -> {}", channel, version);
 
-        // 2. fetch manifest (any working mirror)
         let (_, manifest) = mirrors::fetch_manifest(&client, &mirrors, &version).await?;
         let entry = manifest
             .platforms
@@ -86,7 +46,6 @@ impl Tool for ClaudeCode {
             .ok_or_else(|| AppError::ManifestMissingPlatform(plat.to_string()))?
             .clone();
 
-        // 3. download binary, falling through mirrors on failure
         let staging = installer::staging_dir()?;
         tokio::fs::create_dir_all(&staging).await?;
         let dest = staging.join(format!("claude-{}-{}", version, plat));
@@ -96,15 +55,7 @@ impl Tool for ClaudeCode {
         for m in &mirrors.mirrors {
             let url = m.binary_url(&version, plat, &entry.binary);
             tracing::info!("download attempt: {}", url);
-            match downloader::download_to_file(
-                &client,
-                &app,
-                Self::ID,
-                m.name(),
-                &url,
-                &dest,
-            )
-            .await
+            match downloader::download_to_file(&client, &app, Self::ID, m.name(), &url, &dest).await
             {
                 Ok(bytes) => {
                     downloaded_bytes = bytes;
@@ -125,21 +76,17 @@ impl Tool for ClaudeCode {
             return Err(AppError::AllMirrorsFailed);
         }
 
-        // 4. checksum
         verifier::verify(&dest, &entry.checksum).await?;
 
-        // 5. self-install
         installer::make_executable(&dest).await?;
         let install_target = if channel == "latest" || channel == "stable" {
             Some(channel.as_str())
         } else {
-            // explicit version pin → don't pass anything special, binary will install itself
             None
         };
         let stdout = installer::run_self_install(&dest, install_target).await?;
         tracing::debug!("self-install stdout:\n{}", stdout);
 
-        // 6. cleanup bootstrap
         let _ = tokio::fs::remove_file(&dest).await;
 
         let install_path = self
@@ -152,6 +99,115 @@ impl Tool for ClaudeCode {
             version,
             install_path,
             elapsed_secs: started.elapsed().as_secs(),
+            method: InstallMethod::Native,
         })
     }
+
+    async fn install_npm(&self, started: Instant) -> Result<InstallReport> {
+        let info = npm_installer::detect_node().await?;
+        let min = self.npm_min_node();
+        if info.node_major < min {
+            return Err(AppError::Other(format!(
+                "Claude Code 通过 npm 安装需要 Node.js {}+，当前是 {}。请升级 Node。",
+                min, info.node_version
+            )));
+        }
+        npm_installer::install_global(Self::NPM_PACKAGE, None).await?;
+
+        let version = self
+            .detect_installed()
+            .await
+            .unwrap_or_else(|| "(unknown)".into());
+        let install_path = npm_installer::npm_global_bin().await.unwrap_or_default();
+
+        Ok(InstallReport {
+            tool_id: Self::ID.to_string(),
+            version,
+            install_path,
+            elapsed_secs: started.elapsed().as_secs(),
+            method: InstallMethod::Npm,
+        })
+    }
+}
+
+impl Tool for ClaudeCode {
+    fn id(&self) -> ToolId {
+        Self::ID
+    }
+
+    /// Same dir on all three platforms — Claude Code uses Unix-style layout
+    /// even on Windows (`%USERPROFILE%\.local\bin\claude.exe`).
+    fn launcher_dir(&self) -> Option<PathBuf> {
+        Some(dirs::home_dir()?.join(".local").join("bin"))
+    }
+
+    fn npm_package(&self) -> Option<&'static str> {
+        Some(Self::NPM_PACKAGE)
+    }
+
+    fn npm_min_node(&self) -> u32 {
+        18
+    }
+
+    fn descriptor(&self) -> ToolDescriptor {
+        ToolDescriptor {
+            id: Self::ID.to_string(),
+            name: "Claude Code".to_string(),
+            description: "Anthropic 官方命令行工具".to_string(),
+            installed_version: None,
+            install_path: self.launcher_path().and_then(|p| p.to_str().map(String::from)),
+            supports_npm: true,
+            npm_package: Some(Self::NPM_PACKAGE.to_string()),
+            npm_min_node: Some(self.npm_min_node()),
+        }
+    }
+
+    async fn detect_installed(&self) -> Option<String> {
+        // 1. Try our managed launcher path first
+        if let Some(p) = self.launcher_path() {
+            if p.exists() {
+                if let Some(v) = run_version(&p).await {
+                    return Some(v);
+                }
+            }
+        }
+        // 2. Fallback: probe whatever's on PATH (npm-installed binary lands here)
+        let bin_name = if cfg!(target_os = "windows") {
+            "claude"
+        } else {
+            "claude"
+        };
+        run_version(std::path::Path::new(bin_name)).await
+    }
+
+    async fn install(
+        &self,
+        method: InstallMethod,
+        app: AppHandle,
+        client: reqwest::Client,
+        mirrors: MirrorList,
+        channel: String,
+    ) -> Result<InstallReport> {
+        let started = Instant::now();
+        match method {
+            InstallMethod::Native => {
+                self.install_native(app, client, mirrors, channel, started).await
+            }
+            InstallMethod::Npm => self.install_npm(started).await,
+        }
+    }
+}
+
+async fn run_version(path: &std::path::Path) -> Option<String> {
+    let output = tokio::process::Command::new(path)
+        .arg("--version")
+        .output()
+        .await
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let s = String::from_utf8_lossy(&output.stdout).to_string();
+    // Format examples: "2.1.132 (Claude Code)"
+    s.split_whitespace().next().map(String::from)
 }

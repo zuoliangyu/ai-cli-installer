@@ -43,7 +43,7 @@
 
   <footer>
     <button class="footer-btn" onclick={() => (aboutOpen = true)}>
-      v0.0.7 · 关于
+      v0.0.8 · 关于
     </button>
   </footer>
 </main>

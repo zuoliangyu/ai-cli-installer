@@ -4,6 +4,7 @@ import { tools, mirrorProbes } from "./stores";
 import type {
   ToolDescriptor,
   InstallReport,
+  InstallMethod,
   DownloadProgress,
   MirrorProbe,
   Channel,
@@ -11,6 +12,7 @@ import type {
   PathScope,
   ClaudePreset,
   ClaudeSettingsEnv,
+  NodeInfo,
 } from "./types";
 
 export async function initApp(): Promise<void> {
@@ -36,9 +38,14 @@ export async function probeMirrors(): Promise<MirrorProbe[]> {
 
 export async function installTool(
   toolId: string,
-  channel: Channel = "latest"
+  channel: Channel = "latest",
+  method: InstallMethod = "native"
 ): Promise<InstallReport> {
-  return invoke<InstallReport>("install_tool", { toolId, channel });
+  return invoke<InstallReport>("install_tool", { toolId, channel, method });
+}
+
+export async function detectNode(): Promise<NodeInfo> {
+  return invoke<NodeInfo>("detect_node");
 }
 
 export function onDownloadProgress(

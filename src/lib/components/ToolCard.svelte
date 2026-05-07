@@ -12,6 +12,7 @@
     ToolDescriptor,
     DownloadProgress,
     PathStatus,
+    InstallMethod,
   } from "../types";
   import ProgressBar from "./ProgressBar.svelte";
 
@@ -26,6 +27,7 @@
   let message = $state<string | null>(null);
   let error = $state<string | null>(null);
   let pathStatus = $state<PathStatus | null>(null);
+  let method = $state<InstallMethod>("native");
   let unlisten: (() => void) | null = null;
 
   onMount(async () => {
@@ -55,8 +57,9 @@
     message = null;
     progress = null;
     try {
-      const report = await installTool(tool.id, channel);
-      message = `已安装 ${report.version} (${report.elapsed_secs}s)`;
+      const report = await installTool(tool.id, channel, method);
+      const via = report.method === "npm" ? "npm" : "镜像";
+      message = `已通过${via}安装 ${report.version} (${report.elapsed_secs}s)`;
       await refreshTools();
       await refreshPathStatus();
     } catch (e) {
@@ -118,6 +121,38 @@
       </button>
     </div>
   </div>
+
+  {#if tool.supports_npm}
+    <div class="method-row">
+      <span class="method-label">安装方式</span>
+      <label>
+        <input
+          type="radio"
+          name="method-{tool.id}"
+          value="native"
+          bind:group={method}
+          disabled={busy}
+        />
+        镜像加速 (推荐)
+      </label>
+      <label>
+        <input
+          type="radio"
+          name="method-{tool.id}"
+          value="npm"
+          bind:group={method}
+          disabled={busy}
+        />
+        npm
+        {#if tool.npm_package}
+          <code class="pkg">{tool.npm_package}</code>
+        {/if}
+        {#if tool.npm_min_node}
+          <span class="hint">需 Node ≥ {tool.npm_min_node}</span>
+        {/if}
+      </label>
+    </div>
+  {/if}
 
   {#if progress}
     <ProgressBar
@@ -207,6 +242,44 @@
   }
   .actions button {
     white-space: nowrap;
+  }
+  .method-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.4rem 0.6rem;
+    background: rgba(0, 0, 0, 0.03);
+    border-radius: 6px;
+    font-size: 0.78rem;
+  }
+  .method-label {
+    color: var(--text-muted);
+    font-weight: 500;
+    margin-right: 0.2rem;
+  }
+  .method-row label {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    cursor: pointer;
+  }
+  .method-row input[type="radio"] {
+    margin: 0;
+    accent-color: var(--accent);
+    cursor: pointer;
+  }
+  .method-row .pkg {
+    font-family: ui-monospace, Consolas, monospace;
+    font-size: 0.72rem;
+    color: var(--text-muted);
+    background: rgba(0, 0, 0, 0.05);
+    padding: 0.05rem 0.3rem;
+    border-radius: 3px;
+  }
+  .method-row .hint {
+    color: var(--text-muted);
+    font-size: 0.7rem;
   }
   .path-row {
     display: flex;

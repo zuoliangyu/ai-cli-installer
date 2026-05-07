@@ -4,6 +4,30 @@
 
 ## [Unreleased]
 
+## [0.0.8] - 2026-05-07
+
+### 新增
+
+- **npm 安装路径**：Claude Code 和 Codex 现在都能选择 npm 路径安装
+  - Claude Code → `npm install -g @anthropic-ai/claude-code`（需 Node ≥ 18）
+  - Codex → `npm install -g @openai/codex`（需 Node ≥ 16）
+  - 默认走淘宝 npm 镜像 `https://registry.npmmirror.com`，国内速度起飞
+  - **不**永久修改用户的 npm config（registry 通过 `--registry` 参数一次性传入）
+  - 工具卡片新增「安装方式」单选条：镜像加速 (推荐) / npm
+- **「检测已安装版本」加 PATH 回退**：之前只查 `~/.local/bin/`，现在如果该路径无文件会降级到 PATH 查找，npm 装的版本（在 `npm prefix -g`）也能被识别
+- 后端新 `detect_node` Tauri 命令（前端可独立查询 Node 状态）
+
+### 内部
+
+- `tools/spec.rs` 加 `InstallMethod` 枚举（Native / Npm）+ `npm_package` / `npm_min_node` trait 方法
+- `InstallReport` 加 `method` 字段，前端能区分本次装的是哪条路径
+- `npm_installer.rs` 新模块（120 行）：Node 版本检测 + `npm install -g --registry ...` + `npm prefix -g` 解析全局 bin 目录
+- `ToolDescriptor` 加 `supports_npm` / `npm_package` / `npm_min_node` 字段，UI 自动显示对应控件
+
+### 跳过
+
+- v0.0.7 计划过的 Gemini CLI 集成不做了——Gemini 只有 npm 路径，跟现在「专注 Claude Code + Codex」的目标重叠度低
+
 ## [0.0.7] - 2026-05-07
 
 ### 新增
