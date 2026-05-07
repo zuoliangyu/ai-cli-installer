@@ -97,11 +97,16 @@ pub struct MirrorList {
 }
 
 impl MirrorList {
-    /// Built-in fallback used when remote mirrors.json cannot be loaded.
-    /// Keep this list synced with mirrors.json in claude-code-mirror repo.
+    /// Built-in fallback for the Claude Code mirror — kept for backwards compat /
+    /// default UI display. Tools should call `builtin_for` with their own repo.
     pub fn builtin() -> Self {
+        Self::builtin_for("claude-code-mirror", /* with_upstream */ true)
+    }
+
+    /// Built-in fallback parameterized by mirror repo name.
+    /// `with_upstream`: include downloads.claude.ai (only valid for claude-code).
+    pub fn builtin_for(repo: &str, with_upstream: bool) -> Self {
         let owner = "zuoliangyu";
-        let repo = "claude-code-mirror";
 
         let gh = |name: &str, proxy: Option<&str>| Mirror::GhRelease {
             name: name.to_string(),
@@ -110,21 +115,23 @@ impl MirrorList {
             proxy: proxy.map(String::from),
         };
 
-        Self {
-            mirrors: vec![
-                Mirror::Upstream {
-                    name: "official".to_string(),
-                    base: "https://downloads.claude.ai/claude-code-releases".to_string(),
-                },
-                gh("github-direct", None),
-                gh("gh-proxy", Some("https://gh-proxy.com")),
-                gh("fastgit", Some("https://fastgit.cc")),
-                gh("yylx", Some("https://git.yylx.win")),
-                gh("chenc", Some("https://github.chenc.dev")),
-                gh("ghproxy-net", Some("https://ghproxy.net")),
-                gh("ghfast", Some("https://ghfast.top")),
-            ],
+        let mut mirrors = Vec::new();
+        if with_upstream {
+            mirrors.push(Mirror::Upstream {
+                name: "official".to_string(),
+                base: "https://downloads.claude.ai/claude-code-releases".to_string(),
+            });
         }
+        mirrors.extend([
+            gh("github-direct", None),
+            gh("gh-proxy", Some("https://gh-proxy.com")),
+            gh("fastgit", Some("https://fastgit.cc")),
+            gh("yylx", Some("https://git.yylx.win")),
+            gh("chenc", Some("https://github.chenc.dev")),
+            gh("ghproxy-net", Some("https://ghproxy.net")),
+            gh("ghfast", Some("https://ghfast.top")),
+        ]);
+        Self { mirrors }
     }
 }
 

@@ -6,12 +6,17 @@ use crate::env_manager::{self, PathScope, PathStatus};
 use crate::error::{AppError, Result};
 use crate::mirrors::{self, MirrorList, MirrorProbe};
 use crate::presets::{self, ClaudePreset, ClaudeSettingsEnv};
-use crate::tools::{claude_code::ClaudeCode, InstallReport, Tool, ToolDescriptor};
+use crate::tools::{
+    claude_code::ClaudeCode, codex::CodexCli, InstallReport, Tool, ToolDescriptor,
+};
 
-/// Resolve a tool_id to its launcher dir, or return Other error.
+/// Resolve a tool_id to its launcher dir.
 fn launcher_dir_for(tool_id: &str) -> Result<std::path::PathBuf> {
     match tool_id {
         ClaudeCode::ID => ClaudeCode
+            .launcher_dir()
+            .ok_or_else(|| AppError::Other("home dir not available".into())),
+        CodexCli::ID => CodexCli
             .launcher_dir()
             .ok_or_else(|| AppError::Other("home dir not available".into())),
         other => Err(AppError::Other(format!("unknown tool: {}", other))),
@@ -40,9 +45,14 @@ impl AppState {
 #[tauri::command]
 pub async fn list_tools(_state: State<'_, Arc<AppState>>) -> Result<Vec<ToolDescriptor>> {
     let cc = ClaudeCode;
-    let mut d = cc.descriptor();
-    d.installed_version = cc.detect_installed().await;
-    Ok(vec![d])
+    let mut cd = cc.descriptor();
+    cd.installed_version = cc.detect_installed().await;
+
+    let cx = CodexCli;
+    let mut xd = cx.descriptor();
+    xd.installed_version = cx.detect_installed().await;
+
+    Ok(vec![cd, xd])
 }
 
 #[tauri::command]
@@ -64,12 +74,15 @@ pub async fn install_tool(
     channel: Option<String>,
 ) -> Result<InstallReport> {
     let channel = channel.unwrap_or_else(|| "latest".to_string());
-    let mirrors = state.mirrors.read().await.clone();
+    let client = state.client.clone();
     match tool_id.as_str() {
         ClaudeCode::ID => {
-            ClaudeCode
-                .install(app, state.client.clone(), mirrors, channel)
-                .await
+            let mirrors = ClaudeCode.mirror_list();
+            ClaudeCode.install(app, client, mirrors, channel).await
+        }
+        CodexCli::ID => {
+            let mirrors = CodexCli.mirror_list();
+            CodexCli.install(app, client, mirrors, channel).await
         }
         other => Err(AppError::Other(format!("unknown tool: {}", other))),
     }

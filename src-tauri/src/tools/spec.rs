@@ -37,6 +37,12 @@ pub trait Tool: Send + Sync {
     /// Returned path may not exist yet (e.g. before install).
     fn launcher_dir(&self) -> Option<PathBuf>;
 
+    /// Mirror sources for this tool. Default = Claude Code's mirrors
+    /// (upstream + claude-code-mirror); each tool overrides as needed.
+    fn mirror_list(&self) -> MirrorList {
+        MirrorList::builtin()
+    }
+
     async fn detect_installed(&self) -> Option<String>;
 
     async fn install(

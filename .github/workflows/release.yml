@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Tag (e.g. v0.0.1). Required for manual run.'
+        description: 'Tag (e.g. v0.0.7). Required for manual run.'
         required: true
 
 # Concurrency: only one release per tag in flight
@@ -15,12 +15,9 @@ concurrency:
   group: release-${{ github.ref || github.event.inputs.tag }}
   cancel-in-progress: false
 
-env:
-  DIST_REPO: zuoliangyu/ai-cli-installer-dist
-
 jobs:
   prepare:
-    name: Prepare release on dist repo
+    name: Prepare draft release
     runs-on: ubuntu-latest
     outputs:
       tag: ${{ steps.resolve.outputs.tag }}
@@ -34,20 +31,16 @@ jobs:
             echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
           fi
 
-      - name: Create draft release on ${{ env.DIST_REPO }}
+      - name: Create draft release (if not exists)
         env:
-          GH_TOKEN: ${{ secrets.DIST_REPO_PAT }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           TAG="${{ steps.resolve.outputs.tag }}"
-          # If a release for this tag already exists, just leave it; otherwise create draft.
-          if ! gh release view "$TAG" --repo "$DIST_REPO" >/dev/null 2>&1; then
-            # --target main is required so the publish step's `--latest` can
-            # bind the tag to a real commit. Otherwise GH rejects with HTTP 422
-            # "Repository is empty" (or "tag_name is not a valid tag").
+          if ! gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
             gh release create "$TAG" \
-              --repo "$DIST_REPO" \
+              --repo "${{ github.repository }}" \
               --title "$TAG" \
-              --notes "Automated build of $TAG" \
+              --notes "Automated build of $TAG. See CHANGELOG.md for details." \
               --target main \
               --draft
           fi
@@ -98,31 +91,27 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           args: ${{ matrix.tauri_args }}
-          includeUpdaterJson: true
-          # Empty tagName / releaseId → tauri-action does NOT create or upload to release.
-          # We handle cross-repo upload below with gh CLI.
+          includeUpdaterJson: false
+          # Don't let tauri-action create / upload to release; we manage it
+          # ourselves so generate-latest can compose a merged latest.json.
           tagName: ''
 
-      - name: Upload artifacts to dist repo
+      - name: Upload artifacts to release
         env:
-          GH_TOKEN: ${{ secrets.DIST_REPO_PAT }}
+          GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           TAG="${{ needs.prepare.outputs.tag }}"
           PATHS='${{ steps.tauri.outputs.artifactPaths }}'
-          # tr -d '\r' is critical on Windows runners (git-bash) — jq output
-          # passing through pipes inherits CRLF, and `read -r` does not strip CR.
+          # Strip CR (Windows git-bash) and skip dirs (.app bundles).
           echo "$PATHS" | jq -r '.[]' | tr -d '\r' | while IFS= read -r f; do
-            # Skip macOS .app bundles — they're directories, not single files.
-            # The corresponding .app.tar.gz is the actual updater artifact.
             if [ -d "$f" ]; then
               echo "skip dir: $f"
               continue
             fi
-            # Normalize Windows backslashes — gh CLI accepts forward slashes on Win.
             f="${f//\\//}"
             echo "uploading: $f"
-            gh release upload "$TAG" "$f" --repo "$DIST_REPO" --clobber
+            gh release upload "$TAG" "$f" --repo "${{ github.repository }}" --clobber
           done
 
   generate-latest:
@@ -132,20 +121,17 @@ jobs:
     steps:
       - name: Build and upload latest.json
         env:
-          GH_TOKEN: ${{ secrets.DIST_REPO_PAT }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           TAG="${{ needs.prepare.outputs.tag }}"
           VERSION="${TAG#v}"
           tmp=$(mktemp -d)
           cd "$tmp"
 
-          # Pull the .sig files we need from the just-uploaded release.
-          gh release download "$TAG" --repo "$DIST_REPO" \
+          gh release download "$TAG" --repo "${{ github.repository }}" \
             -p '*.sig' || true
-
           ls -la
 
-          # Read signatures (each .sig is a single-line minisign blob).
           read_sig() {
             local pattern="$1"
             local f
@@ -153,21 +139,19 @@ jobs:
             [ -n "$f" ] && cat "$f" || echo ""
           }
 
-          # Tauri v2 updater protocol on Windows downloads the NSIS installer
-          # directly and verifies with the installer's .sig — no .zip wrapper.
+          # Tauri v2 updater on Windows downloads NSIS installer directly,
+          # verifies via .exe.sig — no .zip wrapper needed.
           WIN_SIG=$(read_sig "*_x64-setup.exe.sig")
           DARWIN_SIG=$(read_sig "*.app.tar.gz.sig")
           LINUX_SIG=$(read_sig "*_amd64.AppImage.sig")
 
           if [ -z "$WIN_SIG" ] || [ -z "$DARWIN_SIG" ] || [ -z "$LINUX_SIG" ]; then
-            echo "WARNING: at least one platform missing signature"
-            echo "  win=${#WIN_SIG} darwin=${#DARWIN_SIG} linux=${#LINUX_SIG}"
+            echo "WARNING: missing sig (win=${#WIN_SIG} darwin=${#DARWIN_SIG} linux=${#LINUX_SIG})"
           fi
 
-          URL_BASE="https://github.com/$DIST_REPO/releases/download/$TAG"
+          URL_BASE="https://github.com/${{ github.repository }}/releases/download/$TAG"
           PUB_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
-          # jq handles JSON escaping correctly (signatures contain newlines).
           jq -n \
             --arg version "$VERSION" \
             --arg notes "Release v$VERSION" \
@@ -192,18 +176,18 @@ jobs:
           echo "=== latest.json ==="
           cat latest.json
 
-          gh release upload "$TAG" latest.json --repo "$DIST_REPO" --clobber
+          gh release upload "$TAG" latest.json --repo "${{ github.repository }}" --clobber
 
   publish:
     name: Publish release
     needs: [prepare, build, generate-latest]
     runs-on: ubuntu-latest
     steps:
-      - name: Mark release as non-draft
+      - name: Mark release as non-draft + latest
         env:
-          GH_TOKEN: ${{ secrets.DIST_REPO_PAT }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           gh release edit "${{ needs.prepare.outputs.tag }}" \
-            --repo "$DIST_REPO" \
+            --repo "${{ github.repository }}" \
             --draft=false \
             --latest

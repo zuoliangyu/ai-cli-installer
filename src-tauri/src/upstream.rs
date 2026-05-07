@@ -15,9 +15,27 @@ pub struct Manifest {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct PlatformEntry {
+    /// File name on our mirror release (after `{platform}-` prefix in flat
+    /// asset name). For Claude Code: `claude` / `claude.exe`. For Codex:
+    /// `codex.zst` / `codex.exe.zst` (still compressed at this point).
     pub binary: String,
+
+    /// Set when `binary` is an archive that decompresses to a different
+    /// filename (Codex: `binary=codex.zst`, `runtime_binary=codex`).
+    /// `None` for Claude Code where `binary` IS the executable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_binary: Option<String>,
+
     pub checksum: String,
     pub size: u64,
+}
+
+impl PlatformEntry {
+    /// Final executable name on disk after any extraction. Falls back to
+    /// `binary` when `runtime_binary` isn't set (e.g. Claude Code).
+    pub fn runtime_filename(&self) -> &str {
+        self.runtime_binary.as_deref().unwrap_or(&self.binary)
+    }
 }
 
 pub async fn fetch_text(client: &reqwest::Client, url: &str) -> Result<String> {

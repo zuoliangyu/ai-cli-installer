@@ -16,7 +16,7 @@ GH Release (zuoliangyu/claude-code-mirror)
 用户机器 → Claude Code 已装
 ```
 
-应用本体由 **私有源码仓库 (本仓库)** 编译，产物推送到公开的 `ai-cli-installer-dist` 仓库 Release，供终端用户下载。
+应用源码与发版产物都在本仓库（v0.0.7+ 起改为单仓库公开模式；v0.0.1~v0.0.6 的历史归档在 [`ai-cli-installer-dist`](https://github.com/zuoliangyu/ai-cli-installer-dist)）。
 
 ## 目录
 
@@ -93,18 +93,20 @@ git tag v0.0.1
 git push --tags
 ```
 
-CI 流程：
-1. `prepare`: 在 `ai-cli-installer-dist` 创建 draft release
-2. `build`: 三平台并行构建（Linux/Windows/macOS arm64），用 `gh release upload --clobber` 跨仓库推送产物
-3. `publish`: 取消 draft 标志、设为 latest
+CI 流程（v0.0.7+ 同仓库模式）：
+1. `prepare`: 在本仓库创建 draft release（如果不存在）
+2. `build`: 三平台并行构建（Linux x64 / Windows x64 / macOS arm64），上传 bundle 到 release
+3. `generate-latest`: 下载各平台 .sig，用 jq 拼出 `latest.json` 上传
+4. `publish`: 取消 draft 标志、设为 latest
 
 需要的 GitHub Secrets（在本仓库 Settings → Secrets）：
 
 | Secret | 用途 |
 |--|--|
-| `DIST_REPO_PAT` | fine-grained PAT，授权范围限 `ai-cli-installer-dist` 仓库的 Contents=Write |
 | `TAURI_SIGNING_PRIVATE_KEY` | Tauri updater 签名私钥（base64） |
 | `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | 私钥密码（生成时设置的） |
+
+> v0.0.6 及之前用过 `DIST_REPO_PAT`（跨仓库发版到 ai-cli-installer-dist）。v0.0.7 起转单仓库模式，只用内置 `GITHUB_TOKEN`，PAT 不再需要。
 
 生成 updater 签名密钥：
 

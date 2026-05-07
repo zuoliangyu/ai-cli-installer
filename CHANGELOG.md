@@ -4,6 +4,33 @@
 
 ## [Unreleased]
 
+## [0.0.7] - 2026-05-07
+
+### 新增
+
+- **Codex CLI 支持**：新增 OpenAI Codex CLI 工具卡，与 Claude Code 同样的镜像加速安装体验
+  - 镜像源：[zuoliangyu/codex-mirror](https://github.com/zuoliangyu/codex-mirror)（每日定时同步 openai/codex 的 GitHub Releases）
+  - 6 平台支持（darwin/linux/win32 × x64/arm64）
+  - .zst 压缩格式（每平台 ~60 MB，比 .tar.gz 小 30%），下载后客户端 zstd 解压到 `~/.local/bin/codex(.exe)`
+  - 共享 7 个 GitHub 加速代理（gh-proxy / fastgit / yylx / chenc / ghproxy.net / ghfast）
+- `Tool` trait 加 `mirror_list(&self) -> MirrorList`，每个工具自带镜像源配置（Claude Code → claude-code-mirror，Codex → codex-mirror）
+- `MirrorList::builtin_for(repo, with_upstream)` — 参数化镜像列表构造
+- `PlatformEntry` 加 `runtime_binary` 字段，支持「下载文件名 ≠ 运行时文件名」（Codex 下载 `codex.zst`，解压后 `codex`）
+
+### 改动
+
+- **发版策略转单仓库**：本仓库 v0.0.7+ 由私有改为公开，源码与发版产物都在本仓库 Releases 下，不再走 `ai-cli-installer-dist` 跨仓库链路
+  - `release.yml` 简化：去掉 `DIST_REPO_PAT` secret 依赖，全用内置 `GITHUB_TOKEN`
+  - Tauri updater endpoint 改为 `https://github.com/zuoliangyu/ai-cli-installer/releases/latest/download/latest.json`
+  - `ai-cli-installer-dist` 仓库保留作为 v0.0.1~v0.0.6 历史归档，不再维护
+- v0.0.6 已装用户的 updater 端点指向旧仓库，**收不到 v0.0.7+ 自动更新**，需要手动从本仓库 Releases 重新下载一次
+
+### 内部
+
+- 新增 `tools/codex.rs` 模块，180 行实现完整安装流程
+- 新增依赖 `zstd = "0.13"`（用于 .zst 解压）
+- `commands.rs` 改造：每个工具调用自己的 `mirror_list()`，`AppState.mirrors` 字段保留作为 UI 镜像状态展示用（默认 Claude Code 的镜像列表）
+
 ## [0.0.6] - 2026-05-07
 
 ### 新增
