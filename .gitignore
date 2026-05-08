@@ -8,10 +8,11 @@ dist/
 .env.local
 .env.*.local
 
-# Tauri
+# Tauri / Cargo workspace
+/target/
 src-tauri/target/
 src-tauri/gen/
-# NOTE: src-tauri/Cargo.lock IS committed (binary app — pinning is desirable)
+# NOTE: root Cargo.lock IS committed (binary app — pinning is desirable)
 
 # Editor
 .vscode/*
@@ -39,3 +40,6 @@ pnpm-debug.log*
 # Misc local
 *.tmp
 *.bak
+
+# Claude Code 本地配置
+.claude/

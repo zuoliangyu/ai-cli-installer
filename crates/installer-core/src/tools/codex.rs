@@ -1,6 +1,5 @@
 use std::path::PathBuf;
 use std::time::Instant;
-use tauri::AppHandle;
 
 use crate::downloader;
 use crate::error::{AppError, Result};
@@ -8,6 +7,7 @@ use crate::installer;
 use crate::mirrors::{self, MirrorList};
 use crate::npm_installer;
 use crate::platform;
+use crate::progress::ProgressCallback;
 use crate::tools::{InstallMethod, InstallReport, Tool, ToolDescriptor, ToolId};
 use crate::verifier;
 
@@ -28,7 +28,7 @@ impl CodexCli {
 
     async fn install_native(
         &self,
-        app: AppHandle,
+        progress: ProgressCallback,
         client: reqwest::Client,
         mirrors: MirrorList,
         channel: String,
@@ -55,8 +55,15 @@ impl CodexCli {
         for m in &mirrors.mirrors {
             let url = m.binary_url(&version, plat, &entry.binary);
             tracing::info!("codex download attempt: {}", url);
-            match downloader::download_to_file(&client, &app, Self::ID, m.name(), &url, &zst_dest)
-                .await
+            match downloader::download_to_file(
+                &client,
+                &progress,
+                Self::ID,
+                m.name(),
+                &url,
+                &zst_dest,
+            )
+            .await
             {
                 Ok(bytes) => {
                     downloaded_bytes = bytes;
@@ -200,7 +207,7 @@ impl Tool for CodexCli {
     async fn install(
         &self,
         method: InstallMethod,
-        app: AppHandle,
+        progress: ProgressCallback,
         client: reqwest::Client,
         mirrors: MirrorList,
         channel: String,
@@ -208,7 +215,7 @@ impl Tool for CodexCli {
         let started = Instant::now();
         match method {
             InstallMethod::Native => {
-                self.install_native(app, client, mirrors, channel, started)
+                self.install_native(progress, client, mirrors, channel, started)
                     .await
             }
             InstallMethod::Npm => self.install_npm(client, mirrors, channel, started).await,

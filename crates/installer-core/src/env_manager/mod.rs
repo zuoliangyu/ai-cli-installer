@@ -24,7 +24,8 @@ mod unix;
 #[cfg(unix)]
 use unix as imp;
 
-#[derive(Debug, Clone, Copy, serde::Serialize)]
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum PathScope {
     /// System-wide PATH. Requires admin/sudo.
     System,

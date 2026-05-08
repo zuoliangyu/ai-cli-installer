@@ -26,10 +26,10 @@ const FIXES_JSON: &str = include_str!("../fixes.json");
 /// Remote candidates for fetching the latest `fixes.json`. Tried in order.
 /// Direct first; falls through to GH proxies on failure.
 const FIXES_REMOTE_URLS: &[&str] = &[
-    "https://raw.githubusercontent.com/zuoliangyu/ai-cli-installer/main/src-tauri/fixes.json",
-    "https://gh-proxy.com/https://raw.githubusercontent.com/zuoliangyu/ai-cli-installer/main/src-tauri/fixes.json",
-    "https://fastgit.cc/https://raw.githubusercontent.com/zuoliangyu/ai-cli-installer/main/src-tauri/fixes.json",
-    "https://github.chenc.dev/https://raw.githubusercontent.com/zuoliangyu/ai-cli-installer/main/src-tauri/fixes.json",
+    "https://raw.githubusercontent.com/zuoliangyu/ai-cli-installer/main/crates/installer-core/fixes.json",
+    "https://gh-proxy.com/https://raw.githubusercontent.com/zuoliangyu/ai-cli-installer/main/crates/installer-core/fixes.json",
+    "https://fastgit.cc/https://raw.githubusercontent.com/zuoliangyu/ai-cli-installer/main/crates/installer-core/fixes.json",
+    "https://github.chenc.dev/https://raw.githubusercontent.com/zuoliangyu/ai-cli-installer/main/crates/installer-core/fixes.json",
 ];
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]

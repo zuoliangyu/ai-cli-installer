@@ -1,10 +1,10 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use tauri::AppHandle;
 
 use crate::error::Result;
 use crate::install_diagnostics::ToolInstallation;
 use crate::mirrors::MirrorList;
+use crate::progress::ProgressCallback;
 
 pub type ToolId = &'static str;
 
@@ -88,7 +88,7 @@ pub trait Tool: Send + Sync {
     async fn install(
         &self,
         method: InstallMethod,
-        app: AppHandle,
+        progress: ProgressCallback,
         client: reqwest::Client,
         mirrors: MirrorList,
         channel: String,

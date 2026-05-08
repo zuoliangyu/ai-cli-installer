@@ -4,6 +4,48 @@
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-05-08
+
+### 重大变更：架构解耦
+
+参考 [AI-Session-Viewer](https://github.com/zuoliangyu/AI-Session-Viewer) 的分层结构，把单 crate 改成 **Cargo workspace + 双前端 API 层**。运行行为对终端用户保持一致；面向开发者是一次结构性重构。
+
+### 新增
+
+- **Cargo workspace**（3 个 crate）：
+  - `crates/installer-core` — 纯逻辑核心库，零 Tauri 依赖。包含 mirrors / downloader / verifier / installer / npm_installer / platform / upstream / fixes / presets / install_diagnostics / env_manager / tools。`fixes.json` 也跟着挪进核心
+  - `src-tauri` — 仅留 Tauri 入口 + 薄壳 commands，每个 command 转发到 `installer_core::app_state::*`
+  - `crates/installer-web` — Axum HTTP + WebSocket 服务，`rust-embed` 嵌入 `dist/`，与桌面端共享同一份核心逻辑
+- **Web 模式**：可作为本地 / 远程服务器运行，浏览器访问。`/api/*` 路由覆盖 14 个原 Tauri command；`/ws/progress` 用 `tokio::broadcast` 推送下载进度，与桌面端的 `download-progress` 事件等价
+  - 启动：`npm run build:web && cargo run -p installer-web`
+  - 配置：`INSTALLER_HOST` / `INSTALLER_PORT`（默认 `127.0.0.1:3210`）
+- **前端双 API 层**（`src/lib/`）：
+  - `services/tauriApi.ts` — `invoke` + `listen`
+  - `services/webApi.ts` — `fetch` + `WebSocket`，函数签名 1:1 对齐 tauriApi
+  - `api.ts` — 编译时按 `__IS_TAURI__` 派发；保留所有命名导出，组件 `from "../api"` 不变
+- Vite 加 `__IS_TAURI__` / `__APP_VERSION__` define，footer 版本号改用编译时变量
+
+### 改动
+
+- **进度回调抽象**：`AppHandle::emit("download-progress", ...)` 替换为 `ProgressCallback = Arc<dyn Fn(DownloadProgress) + Send + Sync>`。Tauri 侧 wrap 成 emit；Web 侧 wrap 成 broadcast
+- **`fixes.json` 远程 URL** 改指向新位置 `crates/installer-core/fixes.json`（旧客户端落到 embedded fallback，无功能影响）
+- **构建产物路径**：从 `src-tauri/target/release/bundle/` 改为 workspace 根 `target/release/bundle/`（cargo workspace 默认行为）
+- **CI workflow**：rust-cache `workspaces` 字段从 `src-tauri` 改为 `.`；删除遗留的 `src-tauri/Cargo.lock`，根 `Cargo.lock` 纳入版本控制
+
+### 内部
+
+- 新增 `installer_core::progress::{DownloadProgress, ProgressCallback, noop_progress}`
+- 新增 `installer_core::app_state` 服务层 — `list_tools / install_tool / list_fixes / apply_fixes / check_path_status / list_claude_presets / open_path` 等 14 个统一入口，桌面端和 Web 端共用
+- `Tool::install` 签名 `app: AppHandle` → `progress: ProgressCallback`
+- `PathScope` 加 `Deserialize`，HTTP `POST /api/path/{add,remove}` 可直接收 `{"scope":"user"|"system"}` JSON
+- 前端 vite 构建产物按模式自动二选一：Tauri 模式只打 tauriApi，Web 模式只打 webApi（动态 import + tree-shaking）
+
+### 迁移注意
+
+- 重构后 v0.0.12 已装的桌面用户可正常通过 updater 升级到 v0.1.0；行为没有用户可见变化
+- 开发者拉取更新后，第一次 `cargo build` 会重新填充 root `target/`；旧的 `src-tauri/target/` 可手动删除
+- `tauri.conf.json` 的 `frontendDist: "../dist"` 仍指仓库根 `dist/`，不变
+
 ## [0.0.12] - 2026-05-08
 
 ### 新增

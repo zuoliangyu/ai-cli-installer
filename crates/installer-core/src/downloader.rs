@@ -1,23 +1,14 @@
 use futures_util::StreamExt;
-use serde::Serialize;
 use std::path::Path;
-use tauri::{AppHandle, Emitter};
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
 
 use crate::error::Result;
-
-#[derive(Clone, Serialize)]
-pub struct DownloadProgress {
-    pub tool_id: String,
-    pub downloaded: u64,
-    pub total: Option<u64>,
-    pub mirror: String,
-}
+use crate::progress::{DownloadProgress, ProgressCallback};
 
 pub async fn download_to_file(
     client: &reqwest::Client,
-    app: &AppHandle,
+    progress: &ProgressCallback,
     tool_id: &str,
     mirror_name: &str,
     url: &str,
@@ -41,29 +32,23 @@ pub async fn download_to_file(
 
         // Throttle progress events to ~10/sec
         if last_emit.elapsed().as_millis() >= 100 {
-            let _ = app.emit(
-                "download-progress",
-                DownloadProgress {
-                    tool_id: tool_id.to_string(),
-                    downloaded,
-                    total,
-                    mirror: mirror_name.to_string(),
-                },
-            );
+            progress(DownloadProgress {
+                tool_id: tool_id.to_string(),
+                downloaded,
+                total,
+                mirror: mirror_name.to_string(),
+            });
             last_emit = std::time::Instant::now();
         }
     }
     file.flush().await?;
 
-    let _ = app.emit(
-        "download-progress",
-        DownloadProgress {
-            tool_id: tool_id.to_string(),
-            downloaded,
-            total,
-            mirror: mirror_name.to_string(),
-        },
-    );
+    progress(DownloadProgress {
+        tool_id: tool_id.to_string(),
+        downloaded,
+        total,
+        mirror: mirror_name.to_string(),
+    });
 
     Ok(downloaded)
 }

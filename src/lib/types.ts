@@ -94,6 +94,8 @@ export interface PathStatus {
 
 export type PathScope = "system" | "user";
 
+export type UnlistenFn = () => void;
+
 export type PresetSource = "builtin" | "cc_switch";
 
 export interface ClaudePreset {

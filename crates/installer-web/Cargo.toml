@@ -1,0 +1,24 @@
+[package]
+name = "installer-web"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.77"
+description = "Axum HTTP/WebSocket server for ai-cli-installer (Web mode)"
+
+[[bin]]
+name = "installer-web"
+path = "src/main.rs"
+
+[dependencies]
+installer-core = { path = "../installer-core" }
+
+axum = { version = "0.8", features = ["ws"] }
+tower-http = { version = "0.6", features = ["cors"] }
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rust-embed = { version = "8", features = ["compression"] }
+mime_guess = "2"
+clap = { version = "4", features = ["derive", "env"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }

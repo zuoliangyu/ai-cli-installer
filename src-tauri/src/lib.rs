@@ -1,20 +1,8 @@
-use std::sync::Arc;
 use tauri::{Manager, PhysicalPosition, PhysicalSize};
 
+use installer_core::app_state;
+
 mod commands;
-mod downloader;
-mod env_manager;
-mod error;
-mod fixes;
-mod install_diagnostics;
-mod installer;
-mod mirrors;
-mod npm_installer;
-mod platform;
-mod presets;
-mod tools;
-mod upstream;
-mod verifier;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -29,7 +17,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
-        .manage(Arc::new(commands::AppState::new()))
+        .manage(app_state::shared())
         .setup(|app| {
             configure_main_window(app);
             Ok(())

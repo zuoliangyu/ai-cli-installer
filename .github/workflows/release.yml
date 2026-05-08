@@ -110,7 +110,9 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: src-tauri
+          # Workspace root holds Cargo.lock + the three members
+          # (src-tauri, crates/installer-core, crates/installer-web).
+          workspaces: .
 
       - uses: actions/setup-node@v4
         with:
