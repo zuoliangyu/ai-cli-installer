@@ -4,6 +4,35 @@
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-05-08
+
+### UI 重构：与 AI Session Viewer 对齐设计语言
+
+参考 [AI-Session-Viewer](https://github.com/zuoliangyu/AI-Session-Viewer) 的视觉，把单页布局改成 **Sidebar + 多页 + Cerulean Flow 主题**，作为同系列工具保持视觉一致。功能与 v0.1.0 等价。
+
+### 新增
+
+- **Tailwind CSS + Cerulean Flow 主题**：HSL 变量驱动的青绿主色调，明暗双套配色
+- **三档主题切换**（亮色 / 跟随系统 / 暗色）：Sidebar 底部 ☀ ▣ ☾ 三按钮，写入 `localStorage`，自动响应系统主题变化
+- **左侧 Sidebar 导航**：CLI 工具 / 中转预设 / 配置修复 / 关于，本地 page store 切换主区域
+- **Sidebar 镜像状态卡**：常驻显示镜像可用数量与每条镜像延迟，点击重新探测
+- **「关于」整页**：作者 / 邮箱 / QQ 群 / 哔哩哔哩 / GitHub，并加「同系列工具 → AI Session Viewer」链接
+- 引入 `lucide-svelte` 图标库
+
+### 改动
+
+- `App.svelte` 拆为 `Sidebar` + 内容区两栏布局，主内容区域居中固定宽度
+- `app.css` 由 `--bg/--accent` 等浅色橙主题改为 Cerulean Flow 的 HSL token 体系，配合 Tailwind `@apply`
+- 所有组件（`ToolCard` / `PresetSection` / `FixesSection` / `About` / `ProgressBar`）改为 Tailwind class，按 Session Viewer 的卡片 / 徽章 / 模态框形态重写
+- 「关于」由 modal 改为整页；旧的「v 版本号 · 关于」footer 入口移到 Sidebar 导航
+- `MirrorStatus.svelte` 删除，能力合并进 Sidebar
+- 新增 `src/lib/theme.ts` 与 `src/lib/page.ts` 两个 store
+
+### 内部
+
+- `tailwind.config.js` 把 HSL CSS 变量映射成 `bg-primary` / `text-muted-foreground` / `border-border` 等 Tailwind 颜色 token，方便后续与 Session Viewer 共享 class 体系
+- `lucide-svelte` v1 已删除 `Github` 等品牌图标，About 内 GitHub 入口改用内联 SVG path
+
 ## [0.1.0] - 2026-05-08
 
 ### 重大变更：架构解耦

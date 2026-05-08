@@ -16,52 +16,32 @@
   let pct = $derived(total ? Math.min(100, (downloaded / total) * 100) : 0);
 </script>
 
-<div class="wrap">
-  <div class="bar">
+<div class="flex flex-col gap-1">
+  <div class="h-1.5 bg-muted rounded-full overflow-hidden">
     {#if total}
-      <div class="fill" style="width: {pct}%"></div>
+      <div class="h-full bg-primary transition-[width] duration-150" style="width: {pct}%"></div>
     {:else}
-      <div class="fill indeterminate"></div>
+      <div class="h-full w-1/3 bg-primary indeterminate"></div>
     {/if}
   </div>
-  <div class="meta">
-    <span>{formatBytes(downloaded)}{total ? ` / ${formatBytes(total)}` : ""}</span>
-    {#if mirror}<span class="mirror">via {mirror}</span>{/if}
+  <div class="flex justify-between text-[11px] text-muted-foreground">
+    <span class="font-mono">
+      {formatBytes(downloaded)}{total ? ` / ${formatBytes(total)}` : ""}
+    </span>
+    {#if mirror}<span class="font-mono">via {mirror}</span>{/if}
   </div>
 </div>
 
 <style>
-  .wrap {
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
-  }
-  .bar {
-    height: 6px;
-    background: var(--border);
-    border-radius: 3px;
-    overflow: hidden;
-  }
-  .fill {
-    height: 100%;
-    background: var(--accent);
-    transition: width 0.15s linear;
-  }
   .indeterminate {
-    width: 30%;
     animation: slide 1.2s ease-in-out infinite;
   }
   @keyframes slide {
-    0% { margin-left: -30%; }
-    100% { margin-left: 100%; }
-  }
-  .meta {
-    display: flex;
-    justify-content: space-between;
-    font-size: 0.8rem;
-    color: var(--text-muted);
-  }
-  .mirror {
-    font-family: ui-monospace, "SF Mono", Consolas, monospace;
+    0% {
+      margin-left: -33%;
+    }
+    100% {
+      margin-left: 100%;
+    }
   }
 </style>

@@ -7,6 +7,7 @@
   } from "../api";
   import { open as openExternal } from "@tauri-apps/plugin-shell";
   import type { ClaudePreset, ClaudeSettingsEnv } from "../types";
+  import { CheckCircle2, ExternalLink, X } from "lucide-svelte";
 
   let presets = $state<ClaudePreset[]>([]);
   let currentEnv = $state<ClaudeSettingsEnv | null>(null);
@@ -71,263 +72,142 @@
   }
 </script>
 
-<section class="presets">
+<section class="flex flex-col gap-3">
   <header>
-    <h2>中转站快捷配置</h2>
-    <p class="hint">
-      只写入 <code>~/.claude/settings.json</code> 的
-      <code>env.ANTHROPIC_BASE_URL</code> 与
-      <code>env.ANTHROPIC_AUTH_TOKEN</code>，其它字段保留不动
+    <h2 class="text-base font-semibold text-foreground">中转站快捷配置</h2>
+    <p class="mt-1 text-xs text-muted-foreground leading-relaxed">
+      只写入 <code class="font-mono text-[11px] bg-muted px-1 py-0.5 rounded">~/.claude/settings.json</code>
+      的 <code class="font-mono text-[11px] bg-muted px-1 py-0.5 rounded">env.ANTHROPIC_BASE_URL</code> 与
+      <code class="font-mono text-[11px] bg-muted px-1 py-0.5 rounded">env.ANTHROPIC_AUTH_TOKEN</code>，
+      其它字段保留不动
     </p>
   </header>
 
   {#if currentEnv?.anthropic_base_url}
-    <div class="current">
-      当前激活：<span class="url">{currentEnv.anthropic_base_url}</span>
+    <div class="flex items-center gap-2 px-3 py-2 rounded-md bg-success/10 text-xs text-success">
+      <CheckCircle2 class="w-3.5 h-3.5 shrink-0" />
+      <span>当前激活：</span>
+      <span class="font-mono truncate">{currentEnv.anthropic_base_url}</span>
     </div>
   {/if}
 
-  <div class="grid">
+  <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
     {#each presets as p (p.id)}
-      <article class="card" class:active={isActive(p)}>
-        <div class="head">
-          <span class="name">{p.name}</span>
-          {#if isActive(p)}<span class="badge">使用中</span>{/if}
-          {#if p.source === "cc_switch"}<span class="src">cc-switch</span>{/if}
+      <article
+        class="flex flex-col gap-2 p-3 rounded-md border bg-card transition-colors {isActive(p)
+          ? 'border-success/60 bg-success/5'
+          : 'border-border'}"
+      >
+        <div class="flex items-center gap-2">
+          <span class="font-medium text-sm text-foreground flex-1 truncate">{p.name}</span>
+          {#if isActive(p)}
+            <span class="text-[10px] px-1.5 py-0.5 rounded bg-success text-success-foreground font-semibold">
+              使用中
+            </span>
+          {/if}
+          {#if p.source === "cc_switch"}
+            <span class="text-[10px] text-muted-foreground">cc-switch</span>
+          {/if}
         </div>
-        <button class="link" onclick={() => openPresetUrl(p)}>
+        <button
+          onclick={() => openPresetUrl(p)}
+          class="text-left text-[11px] font-mono text-primary hover:underline truncate"
+          title={p.base_url}
+        >
           {p.base_url}
         </button>
-        <div class="actions">
-          <button class="primary" onclick={() => pick(p)} disabled={busy}>
-            {isActive(p) ? "更换 Key" : "使用此预设"}
-          </button>
-        </div>
+        <button
+          onclick={() => pick(p)}
+          disabled={busy}
+          class="mt-1 w-full px-2.5 py-1.5 text-xs rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
+        >
+          {isActive(p) ? "更换 Key" : "使用此预设"}
+        </button>
       </article>
     {/each}
   </div>
 
   {#if presets.length === 0}
-    <div class="empty">暂无可用预设。</div>
+    <div class="px-3 py-6 text-center text-xs text-muted-foreground border border-dashed border-border rounded-md">
+      暂无可用预设。
+    </div>
   {/if}
 
-  {#if message}<div class="msg success">{message}</div>{/if}
-  {#if error}<div class="msg error">{error}</div>{/if}
+  {#if message}
+    <div class="px-3 py-2 rounded-md text-xs bg-success/10 text-success">{message}</div>
+  {/if}
+  {#if error}
+    <div class="px-3 py-2 rounded-md text-xs bg-destructive/10 text-destructive whitespace-pre-wrap break-words">
+      {error}
+    </div>
+  {/if}
 </section>
 
 {#if selectedPreset}
   <div
-    class="backdrop"
+    class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
     onclick={cancel}
     role="presentation"
   >
     <div
-      class="modal"
+      class="bg-card border border-border rounded-lg shadow-lg w-[26rem] max-w-[90vw] flex flex-col"
       onclick={(e) => e.stopPropagation()}
       onkeydown={(e) => e.stopPropagation()}
       role="dialog"
       aria-modal="true"
       tabindex="-1"
     >
-      <h3>{selectedPreset.name}</h3>
-      <p class="modal-base">
-        Base URL: <code>{selectedPreset.base_url}</code>
-      </p>
-      <label>
-        <span>API Key</span>
-        <input
-          type="password"
-          bind:value={apiKey}
-          placeholder="粘贴该中转站的 API key"
-          autocomplete="off"
-          disabled={busy}
-        />
-      </label>
-      {#if selectedPreset.api_key_url}
-        <button class="link" onclick={() => openPresetUrl(selectedPreset!)}>
-          没有 key？前往 {selectedPreset.api_key_url} 获取 →
+      <div class="flex items-center justify-between p-4 border-b border-border">
+        <h3 class="text-sm font-semibold text-foreground">{selectedPreset.name}</h3>
+        <button
+          onclick={cancel}
+          class="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-colors"
+        >
+          <X class="w-4 h-4" />
         </button>
-      {/if}
-      <div class="modal-actions">
-        <button onclick={cancel} disabled={busy}>取消</button>
-        <button class="primary" onclick={apply} disabled={busy || !apiKey.trim()}>
+      </div>
+      <div class="p-4 flex flex-col gap-3 text-sm">
+        <p class="text-xs text-muted-foreground">
+          Base URL:
+          <code class="font-mono text-foreground">{selectedPreset.base_url}</code>
+        </p>
+        <label class="flex flex-col gap-1.5">
+          <span class="text-xs text-muted-foreground">API Key</span>
+          <input
+            type="password"
+            bind:value={apiKey}
+            placeholder="粘贴该中转站的 API key"
+            autocomplete="off"
+            disabled={busy}
+            class="w-full bg-muted border border-border rounded-md px-3 py-2 text-xs font-mono text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+          />
+        </label>
+        {#if selectedPreset.api_key_url}
+          <button
+            onclick={() => openPresetUrl(selectedPreset!)}
+            class="inline-flex items-center gap-1 text-xs text-primary hover:underline self-start"
+          >
+            没有 key？前往 {selectedPreset.api_key_url} 获取
+            <ExternalLink class="w-3 h-3" />
+          </button>
+        {/if}
+      </div>
+      <div class="flex justify-end gap-2 px-4 py-3 border-t border-border">
+        <button
+          onclick={cancel}
+          disabled={busy}
+          class="px-3 py-1.5 text-xs rounded-md border border-border hover:bg-accent transition-colors disabled:opacity-50"
+        >
+          取消
+        </button>
+        <button
+          onclick={apply}
+          disabled={busy || !apiKey.trim()}
+          class="px-3 py-1.5 text-xs rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
+        >
           {busy ? "应用中…" : "应用"}
         </button>
       </div>
     </div>
   </div>
 {/if}
-
-<style>
-  .presets {
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-  }
-  header h2 {
-    font-size: 1rem;
-    font-weight: 600;
-  }
-  .hint {
-    font-size: 0.78rem;
-    color: var(--text-muted);
-    margin-top: 0.2rem;
-  }
-  .hint code {
-    font-family: ui-monospace, Consolas, monospace;
-    font-size: 0.72rem;
-    background: rgba(0, 0, 0, 0.05);
-    padding: 0.05rem 0.25rem;
-    border-radius: 3px;
-  }
-  .current {
-    font-size: 0.8rem;
-    padding: 0.4rem 0.6rem;
-    background: rgba(22, 163, 74, 0.08);
-    border-radius: 6px;
-    color: var(--success);
-  }
-  .current .url {
-    font-family: ui-monospace, Consolas, monospace;
-  }
-  .grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-    gap: 0.5rem;
-  }
-  .card {
-    display: flex;
-    flex-direction: column;
-    gap: 0.4rem;
-    padding: 0.7rem;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    background: var(--bg-card);
-  }
-  .card.active {
-    border-color: var(--success);
-  }
-  .card .head {
-    display: flex;
-    align-items: center;
-    gap: 0.4rem;
-  }
-  .name {
-    font-weight: 500;
-    flex: 1;
-  }
-  .badge {
-    font-size: 0.65rem;
-    padding: 0.1rem 0.3rem;
-    background: var(--success);
-    color: white;
-    border-radius: 3px;
-  }
-  .src {
-    font-size: 0.65rem;
-    color: var(--text-muted);
-  }
-  .link {
-    background: none;
-    border: none;
-    padding: 0;
-    color: var(--accent);
-    cursor: pointer;
-    text-align: left;
-    font-size: 0.78rem;
-    font-family: ui-monospace, Consolas, monospace;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .link:hover {
-    text-decoration: underline;
-  }
-  .actions {
-    margin-top: 0.2rem;
-  }
-  .actions button {
-    width: 100%;
-    font-size: 0.8rem;
-    padding: 0.3rem 0.4rem;
-  }
-  .empty {
-    padding: 1rem;
-    text-align: center;
-    color: var(--text-muted);
-    font-size: 0.85rem;
-  }
-  .msg {
-    padding: 0.5rem 0.75rem;
-    border-radius: 4px;
-    font-size: 0.85rem;
-  }
-  .msg.success {
-    background: rgba(22, 163, 74, 0.1);
-    color: var(--success);
-  }
-  .msg.error {
-    background: rgba(220, 38, 38, 0.1);
-    color: var(--error);
-    word-break: break-word;
-    white-space: pre-wrap;
-  }
-  .backdrop {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.45);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 100;
-    backdrop-filter: blur(2px);
-  }
-  .modal {
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 1.5rem;
-    width: 90%;
-    max-width: 420px;
-    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.25);
-    display: flex;
-    flex-direction: column;
-    gap: 0.8rem;
-  }
-  .modal h3 {
-    font-size: 1.05rem;
-    font-weight: 600;
-  }
-  .modal-base {
-    font-size: 0.8rem;
-    color: var(--text-muted);
-  }
-  .modal-base code {
-    font-family: ui-monospace, Consolas, monospace;
-  }
-  label {
-    display: flex;
-    flex-direction: column;
-    gap: 0.3rem;
-    font-size: 0.85rem;
-  }
-  input {
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    padding: 0.4rem 0.55rem;
-    background: var(--bg);
-    color: var(--text);
-    font-family: ui-monospace, Consolas, monospace;
-    font-size: 0.85rem;
-  }
-  input:focus {
-    outline: 2px solid var(--accent);
-    outline-offset: -1px;
-  }
-  .modal-actions {
-    display: flex;
-    justify-content: flex-end;
-    gap: 0.5rem;
-    margin-top: 0.4rem;
-  }
-</style>

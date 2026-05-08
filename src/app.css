@@ -1,81 +1,101 @@
-:root {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei",
-    "PingFang SC", Roboto, "Helvetica Neue", Arial, sans-serif;
-  font-size: 14px;
-  line-height: 1.5;
-  color-scheme: light dark;
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
-  --bg: #fafafa;
-  --bg-card: #ffffff;
-  --border: #e5e5e5;
-  --text: #1a1a1a;
-  --text-muted: #6b7280;
-  --accent: #d97706;
-  --accent-hover: #b45309;
-  --success: #16a34a;
-  --error: #dc2626;
-  --warning: #d97706;
-}
-
-@media (prefers-color-scheme: dark) {
+/* ========================================
+   Cerulean Flow — 与 AI Session Viewer 同款青绿主色调
+   ======================================== */
+@layer base {
   :root {
-    --bg: #18181b;
-    --bg-card: #27272a;
-    --border: #3f3f46;
-    --text: #f4f4f5;
-    --text-muted: #a1a1aa;
-    --accent: #f59e0b;
-    --accent-hover: #fbbf24;
+    --background: 210 14% 97%;
+    --foreground: 215 28% 14%;
+    --card: 210 12% 95.5%;
+    --card-foreground: 215 28% 14%;
+    --primary: 190 78% 34%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 210 12% 93.5%;
+    --secondary-foreground: 215 22% 15%;
+    --muted: 210 11% 93.5%;
+    --muted-foreground: 215 10% 46%;
+    --accent: 210 16% 90%;
+    --accent-foreground: 215 22% 15%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+    --success: 152 63% 38%;
+    --success-foreground: 0 0% 100%;
+    --warning: 35 92% 45%;
+    --warning-foreground: 0 0% 100%;
+    --border: 210 14% 87%;
+    --input: 210 14% 87%;
+    --ring: 190 65% 40%;
+    --radius: 0.5rem;
+  }
+
+  .dark {
+    --background: 220 24% 7%;
+    --foreground: 210 14% 93%;
+    --card: 220 20% 10%;
+    --card-foreground: 210 14% 96%;
+    --primary: 185 82% 52%;
+    --primary-foreground: 220 30% 7%;
+    --secondary: 220 18% 13.5%;
+    --secondary-foreground: 210 14% 91%;
+    --muted: 220 18% 11.5%;
+    --muted-foreground: 215 11% 55%;
+    --accent: 215 20% 18%;
+    --accent-foreground: 210 14% 89%;
+    --destructive: 0 63% 45%;
+    --destructive-foreground: 210 20% 98%;
+    --success: 152 60% 50%;
+    --success-foreground: 220 30% 7%;
+    --warning: 38 92% 60%;
+    --warning-foreground: 220 30% 7%;
+    --border: 215 22% 16%;
+    --input: 215 22% 16%;
+    --ring: 185 75% 48%;
   }
 }
 
-* {
-  box-sizing: border-box;
-  margin: 0;
-  padding: 0;
+@layer base {
+  * {
+    @apply border-border;
+  }
+  html,
+  body {
+    height: 100%;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+      "Helvetica Neue", Arial, "PingFang SC", "Microsoft YaHei", sans-serif;
+    font-size: 14px;
+    line-height: 1.5;
+  }
+  code,
+  pre code,
+  kbd {
+    font-family: "JetBrains Mono", "Cascadia Code", "Fira Code", "SF Mono",
+      Consolas, Menlo, Monaco, monospace;
+  }
+  #app {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
 }
 
-html,
-body {
-  height: 100%;
-  background: var(--bg);
-  color: var(--text);
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
 }
-
-#app {
-  min-height: 100vh;
-  display: flex;
-  flex-direction: column;
+::-webkit-scrollbar-track {
+  background: transparent;
 }
-
-button {
-  font-family: inherit;
-  font-size: inherit;
-  cursor: pointer;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 0.4rem 0.8rem;
-  background: var(--bg-card);
-  color: var(--text);
-  transition: background 0.15s, border-color 0.15s;
+::-webkit-scrollbar-thumb {
+  background: hsl(var(--muted-foreground) / 0.3);
+  border-radius: 3px;
 }
-
-button:hover:not(:disabled) {
-  border-color: var(--accent);
-}
-
-button.primary {
-  background: var(--accent);
-  color: white;
-  border-color: var(--accent);
-}
-
-button.primary:hover:not(:disabled) {
-  background: var(--accent-hover);
-  border-color: var(--accent-hover);
-}
-
-button:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
+::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--muted-foreground) / 0.5);
 }

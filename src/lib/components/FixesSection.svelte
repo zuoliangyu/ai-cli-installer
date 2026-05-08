@@ -3,6 +3,7 @@
   import { listFixes, applyFixes, removeFixes, openPath } from "../api";
   import { open as openExternal } from "@tauri-apps/plugin-shell";
   import type { Fix } from "../types";
+  import { ExternalLink, FileText } from "lucide-svelte";
 
   let fixes = $state<Fix[]>([]);
   let selected = $state<Set<string>>(new Set());
@@ -33,12 +34,9 @@
   function toggle(fix: Fix) {
     if (fix.configured) return;
     const id = fix.id;
-    if (selected.has(id)) {
-      selected.delete(id);
-    } else {
-      selected.add(id);
-    }
-    selected = new Set(selected); // trigger reactivity
+    if (selected.has(id)) selected.delete(id);
+    else selected.add(id);
+    selected = new Set(selected);
   }
 
   function filteredFixes(): Fix[] {
@@ -115,82 +113,110 @@
   }
 </script>
 
-<section class="fixes">
+<section class="flex flex-col gap-3">
   <header>
-    <h2>故障排查 / 配置补丁</h2>
-    <p class="hint">
-      勾选后点击「应用」会把对应字段写入对应配置文件，<strong>保留</strong>已有内容。
-      内容来源：<button class="link" onclick={() => openDoc('https://docs.openclaudecode.cn')}>OCC 配置文档</button>。
+    <h2 class="text-base font-semibold text-foreground">故障排查 / 配置补丁</h2>
+    <p class="mt-1 text-xs text-muted-foreground leading-relaxed">
+      勾选后点击「应用」会把对应字段写入对应配置文件，<strong class="text-foreground">保留</strong>已有内容。
+      内容来源：<button
+        class="text-primary hover:underline"
+        onclick={() => openDoc('https://docs.openclaudecode.cn')}
+      >OCC 配置文档</button>。
     </p>
   </header>
 
   {#if loadError}
-    <div class="msg error">加载修复列表失败：{loadError}</div>
+    <div class="px-3 py-2 rounded-md text-xs bg-destructive/10 text-destructive">
+      加载修复列表失败：{loadError}
+    </div>
   {:else if fixes.length === 0}
-    <div class="empty">加载中…</div>
+    <div class="px-3 py-6 text-center text-xs text-muted-foreground border border-dashed border-border rounded-md">
+      加载中…
+    </div>
   {:else}
-    <div class="filters">
-      <button class:active={filter === "all"} onclick={() => (filter = "all")}>
-        全部 {fixes.length}
-      </button>
-      <button class:active={filter === "configured"} onclick={() => (filter = "configured")}>
-        已配置 {configuredCount()}
-      </button>
-      <button class:active={filter === "pending"} onclick={() => (filter = "pending")}>
-        未配置 {fixes.length - configuredCount()}
-      </button>
+    <!-- Filters -->
+    <div class="flex flex-wrap gap-1.5">
+      {#each [{ k: "all", l: `全部 ${fixes.length}` }, { k: "configured", l: `已配置 ${configuredCount()}` }, { k: "pending", l: `未配置 ${fixes.length - configuredCount()}` }] as f}
+        <button
+          onclick={() => (filter = f.k as typeof filter)}
+          class="px-2.5 py-1 text-xs rounded-md border transition-colors {filter === f.k
+            ? 'border-primary bg-primary/10 text-primary'
+            : 'border-border text-muted-foreground hover:bg-accent/50 hover:text-foreground'}"
+        >
+          {f.l}
+        </button>
+      {/each}
     </div>
 
-    <ul class="list">
+    <!-- List -->
+    <ul class="flex flex-col gap-2">
       {#each filteredFixes() as fix (fix.id)}
-        <li class="item" class:checked={selected.has(fix.id)} class:configured={fix.configured}>
-          <label class="row">
+        <li
+          class="border rounded-md transition-colors {fix.configured
+            ? 'border-success/40 bg-success/5'
+            : selected.has(fix.id)
+              ? 'border-primary bg-primary/5'
+              : 'border-border bg-card'}"
+        >
+          <label class="flex items-start gap-3 p-3 cursor-pointer">
             <input
               type="checkbox"
               checked={fix.configured || selected.has(fix.id)}
               onchange={() => toggle(fix)}
               disabled={busy || fix.configured}
+              class="mt-0.5 accent-primary cursor-pointer disabled:cursor-not-allowed"
             />
-            <div class="content">
-              <div class="title">
-                <div class="title-main">
-                  <span class="code">{fix.code}</span>
-                  <span>{fix.title}</span>
+            <div class="flex-1 min-w-0 flex flex-col gap-1.5">
+              <div class="flex items-center justify-between gap-3">
+                <div class="flex items-center gap-2 flex-wrap min-w-0">
+                  <span class="font-mono text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
+                    {fix.code}
+                  </span>
+                  <span class="text-sm font-medium text-foreground">{fix.title}</span>
                   {#if fix.configured}
-                    <span class="configured-badge">已配置</span>
+                    <span class="text-[10px] px-1.5 py-0.5 rounded bg-success/15 text-success font-semibold">
+                      已配置
+                    </span>
                   {:else if fix.total_patches > 0 && fix.configured_patches > 0}
-                    <span class="partial-badge">
+                    <span class="text-[10px] px-1.5 py-0.5 rounded bg-warning/15 text-warning font-semibold">
                       已配置 {fix.configured_patches}/{fix.total_patches}
                     </span>
                   {/if}
                 </div>
                 {#if fix.configured}
                   <button
-                    class="remove-config"
                     disabled={busy}
                     onclick={(e) => {
                       e.preventDefault();
                       removeFix(fix);
                     }}
+                    class="shrink-0 px-2 py-0.5 text-[11px] rounded border border-warning/30 bg-warning/10 text-warning hover:bg-warning hover:text-warning-foreground transition-colors disabled:opacity-50"
                   >
                     取消配置
                   </button>
                 {/if}
               </div>
-              <p class="desc">{fix.description}</p>
-              <div class="patches">
+              <p class="text-xs text-muted-foreground leading-relaxed">{fix.description}</p>
+              <div class="flex flex-col gap-0.5">
                 {#each fix.patches as p}
-                  <div class="patch">
-                    <span class="file">{targetLabel(p.target)}</span>
-                    <span class="path">{p.path}</span>
-                    <span class="eq">=</span>
-                    <span class="val">{previewValue(p.value)}</span>
+                  <div class="font-mono text-[11px] flex flex-wrap gap-1.5 items-baseline">
+                    <span class="text-muted-foreground">{targetLabel(p.target)}</span>
+                    <span class="text-foreground font-medium">{p.path}</span>
+                    <span class="text-muted-foreground">=</span>
+                    <span class="text-primary">{previewValue(p.value)}</span>
                   </div>
                 {/each}
               </div>
               {#if fix.doc_url}
-                <button class="link doc" onclick={(e) => { e.preventDefault(); openDoc(fix.doc_url); }}>
-                  详细文档 →
+                <button
+                  class="inline-flex items-center gap-1 text-[11px] text-primary hover:underline self-start"
+                  onclick={(e) => {
+                    e.preventDefault();
+                    openDoc(fix.doc_url);
+                  }}
+                >
+                  详细文档
+                  <ExternalLink class="w-3 h-3" />
                 </button>
               {/if}
             </div>
@@ -199,21 +225,31 @@
       {/each}
     </ul>
 
-    <div class="bar">
-      <span class="count">已选 {selected.size} / {fixes.length}</span>
-      <button class="primary" disabled={busy || selected.size === 0} onclick={apply}>
+    <!-- Action bar -->
+    <div class="flex justify-between items-center pt-1">
+      <span class="text-xs text-muted-foreground">已选 {selected.size} / {fixes.length}</span>
+      <button
+        disabled={busy || selected.size === 0}
+        onclick={apply}
+        class="px-3 py-1.5 text-xs rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
+      >
         {busy ? "应用中…" : `应用选中的 ${selected.size} 项`}
       </button>
     </div>
   {/if}
 
   {#if message}
-    <div class="msg success">
+    <div class="px-3 py-2 rounded-md text-xs bg-success/10 text-success flex flex-col gap-1">
       <div>{message}</div>
       {#if touchedFiles.length > 0}
-        <div class="touched-files">
+        <div class="flex flex-col gap-0.5 mt-0.5">
           {#each touchedFiles as path}
-            <button class="file-link" onclick={() => openFile(path)} title={path}>
+            <button
+              onclick={() => openFile(path)}
+              title={path}
+              class="inline-flex items-center gap-1 self-start font-mono text-[11px] text-success hover:underline break-all text-left"
+            >
+              <FileText class="w-3 h-3 shrink-0" />
               {path}
             </button>
           {/each}
@@ -221,229 +257,9 @@
       {/if}
     </div>
   {/if}
-  {#if error}<div class="msg error">{error}</div>{/if}
+  {#if error}
+    <div class="px-3 py-2 rounded-md text-xs font-mono bg-destructive/10 text-destructive whitespace-pre-wrap break-words">
+      {error}
+    </div>
+  {/if}
 </section>
-
-<style>
-  .fixes {
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-  }
-  header h2 {
-    font-size: 1rem;
-    font-weight: 600;
-  }
-  .hint {
-    font-size: 0.78rem;
-    color: var(--text-muted);
-    margin-top: 0.2rem;
-  }
-  .list {
-    list-style: none;
-    display: flex;
-    flex-direction: column;
-    gap: 0.4rem;
-  }
-  .filters {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.4rem;
-  }
-  .filters button {
-    font-size: 0.78rem;
-    padding: 0.3rem 0.65rem;
-  }
-  .filters button.active {
-    background: var(--accent);
-    border-color: var(--accent);
-    color: white;
-  }
-  .item {
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    background: var(--bg-card);
-    transition: border-color 0.15s, background 0.15s;
-  }
-  .item.checked {
-    border-color: var(--accent);
-    background: rgba(217, 119, 6, 0.05);
-  }
-  .item.configured {
-    border-color: rgba(22, 163, 74, 0.28);
-    background: rgba(22, 163, 74, 0.06);
-  }
-  .row {
-    display: flex;
-    gap: 0.6rem;
-    padding: 0.7rem;
-    cursor: pointer;
-    align-items: flex-start;
-  }
-  .row input[type="checkbox"] {
-    margin-top: 0.2rem;
-    accent-color: var(--accent);
-    cursor: pointer;
-  }
-  .content {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 0.3rem;
-  }
-  .title {
-    font-size: 0.9rem;
-    font-weight: 500;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.75rem;
-  }
-  .title-main {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    flex-wrap: wrap;
-    min-width: 0;
-  }
-  .code {
-    font-family: ui-monospace, Consolas, monospace;
-    font-size: 0.7rem;
-    background: rgba(0, 0, 0, 0.07);
-    color: var(--text-muted);
-    padding: 0.05rem 0.4rem;
-    border-radius: 3px;
-  }
-  .configured-badge,
-  .partial-badge {
-    border-radius: 3px;
-    padding: 0.05rem 0.35rem;
-    font-size: 0.68rem;
-    font-weight: 600;
-  }
-  .configured-badge {
-    background: rgba(22, 163, 74, 0.14);
-    color: var(--success);
-  }
-  .partial-badge {
-    background: rgba(217, 119, 6, 0.14);
-    color: var(--warning);
-  }
-  .remove-config {
-    flex-shrink: 0;
-    padding: 0.18rem 0.45rem;
-    font-size: 0.72rem;
-    color: var(--warning);
-    border-color: rgba(217, 119, 6, 0.32);
-    background: rgba(217, 119, 6, 0.08);
-  }
-  .remove-config:hover:not(:disabled) {
-    color: white;
-    border-color: var(--accent);
-    background: var(--accent);
-  }
-  .desc {
-    font-size: 0.78rem;
-    color: var(--text-muted);
-    line-height: 1.45;
-  }
-  .patches {
-    display: flex;
-    flex-direction: column;
-    gap: 0.15rem;
-    margin-top: 0.2rem;
-  }
-  .patch {
-    font-family: ui-monospace, Consolas, monospace;
-    font-size: 0.72rem;
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.3rem;
-    align-items: baseline;
-  }
-  .patch .file {
-    color: var(--text-muted);
-  }
-  .patch .path {
-    color: var(--text);
-    font-weight: 500;
-  }
-  .patch .eq {
-    color: var(--text-muted);
-  }
-  .patch .val {
-    color: var(--accent);
-  }
-  .link {
-    background: none;
-    border: none;
-    padding: 0;
-    color: var(--accent);
-    cursor: pointer;
-    font-size: inherit;
-    font-family: inherit;
-  }
-  .link:hover {
-    text-decoration: underline;
-  }
-  .doc {
-    font-size: 0.75rem;
-    align-self: flex-start;
-  }
-  .bar {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding-top: 0.4rem;
-  }
-  .count {
-    font-size: 0.8rem;
-    color: var(--text-muted);
-  }
-  .empty {
-    padding: 1rem;
-    text-align: center;
-    color: var(--text-muted);
-    font-size: 0.85rem;
-  }
-  .msg {
-    padding: 0.5rem 0.75rem;
-    border-radius: 4px;
-    font-size: 0.85rem;
-  }
-  .msg.success {
-    background: rgba(22, 163, 74, 0.1);
-    color: var(--success);
-  }
-  .touched-files {
-    display: flex;
-    flex-direction: column;
-    gap: 0.2rem;
-    margin-top: 0.12rem;
-  }
-  .file-link {
-    align-self: flex-start;
-    max-width: 100%;
-    padding: 0;
-    border: none;
-    background: none;
-    color: var(--success);
-    font-family: ui-monospace, Consolas, monospace;
-    font-size: 0.76rem;
-    text-align: left;
-    word-break: break-all;
-  }
-  .file-link:hover:not(:disabled) {
-    text-decoration: underline;
-    border-color: transparent;
-  }
-  .msg.error {
-    background: rgba(220, 38, 38, 0.1);
-    color: var(--error);
-    word-break: break-word;
-    white-space: pre-wrap;
-    font-family: ui-monospace, Consolas, monospace;
-    font-size: 0.78rem;
-  }
-</style>

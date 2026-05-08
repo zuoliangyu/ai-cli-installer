@@ -1,6 +1,6 @@
 [package]
 name = "ai-cli-installer"
-version = "0.1.0"
+version = "0.2.0"
 description = "One-click installer for Claude Code with mirror acceleration"
 authors = ["zuoliangyu"]
 edition = "2021"

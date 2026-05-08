@@ -17,6 +17,7 @@
     InstallationSource,
   } from "../types";
   import ProgressBar from "./ProgressBar.svelte";
+  import { CheckCircle2, AlertTriangle, XCircle, Package } from "lucide-svelte";
 
   interface Props {
     tool: ToolDescriptor;
@@ -34,9 +35,7 @@
 
   onMount(async () => {
     unlisten = await onDownloadProgress((p) => {
-      if (p.tool_id === tool.id) {
-        progress = p;
-      }
+      if (p.tool_id === tool.id) progress = p;
     });
     refreshPathStatus();
   });
@@ -119,9 +118,9 @@
   }
 
   function sourceClass(source: InstallationSource): string {
-    if (source === "native") return "native";
-    if (source === "npm_global") return "npm";
-    return "path";
+    if (source === "native") return "bg-primary/15 text-primary";
+    if (source === "npm_global") return "bg-purple-500/15 text-purple-500 dark:text-purple-300";
+    return "bg-success/15 text-success";
   }
 
   function hasSource(source: InstallationSource): boolean {
@@ -140,62 +139,80 @@
         .filter((path): path is string => Boolean(path))
     );
     const nonPathSources = new Set(
-      installs
-        .filter((item) => item.source !== "path")
-        .map((item) => item.source)
+      installs.filter((item) => item.source !== "path").map((item) => item.source)
     );
     return paths.size > 1 || nonPathSources.size > 1;
   }
 </script>
 
-<article class="card">
-  <div class="head">
-    <div class="meta">
-      <h2>{tool.name}</h2>
-      <p class="desc">{tool.description}</p>
+<article class="bg-card border border-border rounded-lg p-4 flex flex-col gap-3">
+  <!-- Head -->
+  <div class="flex justify-between items-start gap-3">
+    <div class="flex-1 min-w-0">
+      <div class="flex items-center gap-2 mb-1">
+        <Package class="w-4 h-4 text-primary shrink-0" />
+        <h2 class="text-base font-semibold text-foreground">{tool.name}</h2>
+      </div>
+      <p class="text-xs text-muted-foreground mb-1.5">{tool.description}</p>
       {#if tool.installed_version}
-        <p class="installed">已安装 v{tool.installed_version}</p>
+        <p class="text-xs text-success flex items-center gap-1">
+          <CheckCircle2 class="w-3 h-3" />
+          已安装 v{tool.installed_version}
+        </p>
       {:else}
-        <p class="not-installed">未安装</p>
+        <p class="text-xs text-muted-foreground">未安装</p>
       {/if}
     </div>
-    <div class="actions">
-      <button class="primary" onclick={() => handleInstall("latest")} disabled={busy}>
+    <div class="flex flex-col gap-1.5 shrink-0">
+      <button
+        onclick={() => handleInstall("latest")}
+        disabled={busy}
+        class="px-3 py-1.5 text-xs whitespace-nowrap rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
+      >
         {channelLabel("latest", tool.latest_version)}
       </button>
-      <button class="primary" onclick={() => handleInstall("stable")} disabled={busy}>
+      <button
+        onclick={() => handleInstall("stable")}
+        disabled={busy}
+        class="px-3 py-1.5 text-xs whitespace-nowrap rounded-md border border-border bg-muted/50 text-foreground hover:bg-accent transition-colors disabled:opacity-50"
+      >
         {channelLabel("stable", tool.stable_version)}
       </button>
     </div>
   </div>
 
+  <!-- Method selector -->
   {#if tool.supports_npm}
-    <div class="method-row">
-      <span class="method-label">安装方式</span>
-      <label>
+    <div class="flex flex-wrap items-center gap-3 px-3 py-2 rounded-md bg-muted/40 text-xs">
+      <span class="text-muted-foreground font-medium">安装方式</span>
+      <label class="inline-flex items-center gap-1.5 cursor-pointer">
         <input
           type="radio"
           name="method-{tool.id}"
           value="native"
           bind:group={method}
           disabled={busy}
+          class="accent-primary"
         />
-        镜像加速 (推荐)
+        镜像加速 <span class="text-muted-foreground">(推荐)</span>
       </label>
-      <label>
+      <label class="inline-flex items-center gap-1.5 cursor-pointer">
         <input
           type="radio"
           name="method-{tool.id}"
           value="npm"
           bind:group={method}
           disabled={busy}
+          class="accent-primary"
         />
         npm
         {#if tool.npm_package}
-          <code class="pkg">{tool.npm_package}</code>
+          <code class="font-mono text-[10px] bg-muted px-1 py-0.5 rounded text-muted-foreground">
+            {tool.npm_package}
+          </code>
         {/if}
         {#if tool.npm_min_node}
-          <span class="hint">需 Node ≥ {tool.npm_min_node}</span>
+          <span class="text-[10px] text-muted-foreground">需 Node ≥ {tool.npm_min_node}</span>
         {/if}
       </label>
     </div>
@@ -209,70 +226,119 @@
     />
   {/if}
 
+  <!-- Diagnostics -->
   {#if tool.installations && tool.installations.length > 0}
-    <div class="diagnostics">
-      <div class="diagnostics-head">
+    <div class="border border-border rounded-md p-2.5 flex flex-col gap-2 text-xs">
+      <div class="flex items-center justify-between gap-2 font-medium">
         <span>安装诊断</span>
         {#if hasInstallationConflict()}
-          <span class="badge warn">多重安装风险</span>
+          <span class="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-warning/15 text-warning font-semibold">
+            <AlertTriangle class="w-3 h-3" />
+            多重安装风险
+          </span>
         {:else}
-          <span class="badge ok">单一来源</span>
+          <span class="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-success/15 text-success font-semibold">
+            <CheckCircle2 class="w-3 h-3" />
+            单一来源
+          </span>
         {/if}
       </div>
-      <div class="install-list">
+      <div class="flex flex-col gap-1.5">
         {#each tool.installations as item}
-          <div class="install-row">
-            <span class={`source ${sourceClass(item.source)}`}>{sourceLabel(item.source)}</span>
-            <span class="install-version">{item.version ? `v${item.version}` : "版本未知"}</span>
+          <div class="flex flex-wrap items-center gap-1.5 min-w-0">
+            <span class="text-[10px] font-semibold px-1.5 py-0.5 rounded {sourceClass(item.source)}">
+              {sourceLabel(item.source)}
+            </span>
+            <span class="text-foreground font-medium">
+              {item.version ? `v${item.version}` : "版本未知"}
+            </span>
             {#if item.current_path}
-              <span class="badge ok">当前 PATH</span>
+              <span class="text-[10px] px-1.5 py-0.5 rounded bg-success/15 text-success">当前 PATH</span>
             {/if}
             {#if item.managed}
-              <span class="badge ok">本应用路径</span>
+              <span class="text-[10px] px-1.5 py-0.5 rounded bg-primary/15 text-primary">本应用路径</span>
             {/if}
             {#if item.path}
-              <code title={item.path}>{item.path}</code>
+              <code
+                class="font-mono text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground break-all"
+                title={item.path}
+              >
+                {item.path}
+              </code>
             {/if}
           </div>
         {/each}
       </div>
 
       {#if hasInstallationConflict()}
-        <div class="resolution">
-          <strong>建议处理</strong>
-          <p>先确认实际使用的来源，再保留一种安装方式；卸载前请备份相关配置。</p>
+        <div class="flex flex-col gap-1.5 pt-2 border-t border-border text-muted-foreground">
+          <strong class="text-[11px] text-warning font-semibold">建议处理</strong>
+          <p class="leading-relaxed">先确认实际使用的来源，再保留一种安装方式；卸载前请备份相关配置。</p>
           {#if tool.npm_package && hasSource("npm_global")}
-            <code>npm uninstall -g {tool.npm_package}</code>
+            <code class="font-mono text-[10px] px-1.5 py-0.5 rounded bg-muted text-foreground break-all">
+              npm uninstall -g {tool.npm_package}
+            </code>
           {/if}
           {#if nativeInstallation()?.path}
-            <code>手动确认后删除 {nativeInstallation()?.path}</code>
+            <code class="font-mono text-[10px] px-1.5 py-0.5 rounded bg-muted text-foreground break-all">
+              手动确认后删除 {nativeInstallation()?.path}
+            </code>
           {/if}
         </div>
       {/if}
     </div>
   {:else}
-    <div class="diagnostics empty-diagnostics">未检测到本机安装来源</div>
+    <div class="border border-dashed border-border rounded-md px-3 py-2 text-xs text-muted-foreground">
+      未检测到本机安装来源
+    </div>
   {/if}
 
+  <!-- PATH row -->
   {#if pathStatus}
-    <div class="path-row">
-      <div class="path-label">
-        <span class="path-dir">{pathStatus.dir}</span>
-        {#if pathStatus.in_system_path}
-          <span class="badge ok">系统 PATH ✓</span>
-        {:else if pathStatus.in_user_path}
-          <span class="badge warn">仅用户 PATH</span>
-        {:else if pathStatus.effective}
-          <span class="badge warn">仅当前会话</span>
-        {:else}
-          <span class="badge err">未在 PATH</span>
-        {/if}
+    <div class="flex items-center justify-between gap-3 px-3 py-2 rounded-md bg-muted/40">
+      <div class="flex flex-col gap-1 min-w-0">
+        <code class="font-mono text-[11px] text-muted-foreground truncate" title={pathStatus.dir}>
+          {pathStatus.dir}
+        </code>
+        <span>
+          {#if pathStatus.in_system_path}
+            <span class="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-success/15 text-success font-semibold">
+              <CheckCircle2 class="w-3 h-3" />
+              系统 PATH
+            </span>
+          {:else if pathStatus.in_user_path}
+            <span class="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-warning/15 text-warning font-semibold">
+              <AlertTriangle class="w-3 h-3" />
+              仅用户 PATH
+            </span>
+          {:else if pathStatus.effective}
+            <span class="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-warning/15 text-warning font-semibold">
+              <AlertTriangle class="w-3 h-3" />
+              仅当前会话
+            </span>
+          {:else}
+            <span class="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-destructive/15 text-destructive font-semibold">
+              <XCircle class="w-3 h-3" />
+              未在 PATH
+            </span>
+          {/if}
+        </span>
       </div>
-      <div class="path-actions">
+      <div class="shrink-0">
         {#if pathStatus.in_system_path}
-          <button onclick={handleRemovePath} disabled={pathBusy}>移除</button>
+          <button
+            onclick={handleRemovePath}
+            disabled={pathBusy}
+            class="px-2.5 py-1 text-xs rounded-md border border-border hover:bg-accent transition-colors disabled:opacity-50"
+          >
+            移除
+          </button>
         {:else}
-          <button class="primary" onclick={handleAddPath} disabled={pathBusy}>
+          <button
+            onclick={handleAddPath}
+            disabled={pathBusy}
+            class="px-2.5 py-1 text-xs rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
+          >
             一键加入系统 PATH
           </button>
         {/if}
@@ -281,241 +347,11 @@
   {/if}
 
   {#if message}
-    <div class="msg success">{message}</div>
+    <div class="px-3 py-2 rounded-md text-xs bg-success/10 text-success">{message}</div>
   {/if}
   {#if error}
-    <div class="msg error">{error}</div>
+    <div class="px-3 py-2 rounded-md text-xs font-mono bg-destructive/10 text-destructive whitespace-pre-wrap break-words">
+      {error}
+    </div>
   {/if}
 </article>
-
-<style>
-  .card {
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 1rem;
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-  }
-  .head {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    gap: 1rem;
-  }
-  .meta {
-    flex: 1;
-    min-width: 0;
-  }
-  h2 {
-    font-size: 1.05rem;
-    font-weight: 600;
-    margin-bottom: 0.25rem;
-  }
-  .desc {
-    font-size: 0.85rem;
-    color: var(--text-muted);
-    margin-bottom: 0.4rem;
-  }
-  .installed {
-    font-size: 0.8rem;
-    color: var(--success);
-  }
-  .not-installed {
-    font-size: 0.8rem;
-    color: var(--text-muted);
-  }
-  .actions {
-    display: flex;
-    flex-direction: column;
-    gap: 0.4rem;
-    flex-shrink: 0;
-  }
-  .actions button {
-    white-space: nowrap;
-  }
-  .method-row {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 0.75rem;
-    padding: 0.4rem 0.6rem;
-    background: rgba(0, 0, 0, 0.03);
-    border-radius: 6px;
-    font-size: 0.78rem;
-  }
-  .method-label {
-    color: var(--text-muted);
-    font-weight: 500;
-    margin-right: 0.2rem;
-  }
-  .method-row label {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.3rem;
-    cursor: pointer;
-  }
-  .method-row input[type="radio"] {
-    margin: 0;
-    accent-color: var(--accent);
-    cursor: pointer;
-  }
-  .method-row .pkg {
-    font-family: ui-monospace, Consolas, monospace;
-    font-size: 0.72rem;
-    color: var(--text-muted);
-    background: rgba(0, 0, 0, 0.05);
-    padding: 0.05rem 0.3rem;
-    border-radius: 3px;
-  }
-  .method-row .hint {
-    color: var(--text-muted);
-    font-size: 0.7rem;
-  }
-  .path-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 0.75rem;
-    padding: 0.5rem 0.75rem;
-    background: rgba(0, 0, 0, 0.03);
-    border-radius: 6px;
-    font-size: 0.85rem;
-  }
-  .path-label {
-    display: flex;
-    flex-direction: column;
-    gap: 0.2rem;
-    min-width: 0;
-  }
-  .path-dir {
-    font-family: ui-monospace, "SF Mono", Consolas, monospace;
-    font-size: 0.75rem;
-    color: var(--text-muted);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .badge {
-    display: inline-block;
-    padding: 0.1rem 0.4rem;
-    border-radius: 3px;
-    font-size: 0.7rem;
-    font-weight: 500;
-  }
-  .badge.ok {
-    background: rgba(22, 163, 74, 0.15);
-    color: var(--success);
-  }
-  .badge.warn {
-    background: rgba(217, 119, 6, 0.15);
-    color: var(--warning);
-  }
-  .badge.err {
-    background: rgba(220, 38, 38, 0.15);
-    color: var(--error);
-  }
-  .path-actions {
-    flex-shrink: 0;
-  }
-  .path-actions button {
-    font-size: 0.78rem;
-    padding: 0.3rem 0.6rem;
-  }
-  .diagnostics {
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 0.6rem;
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-    font-size: 0.8rem;
-  }
-  .empty-diagnostics {
-    color: var(--text-muted);
-  }
-  .diagnostics-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.5rem;
-    font-weight: 500;
-  }
-  .install-list {
-    display: flex;
-    flex-direction: column;
-    gap: 0.35rem;
-  }
-  .install-row {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 0.35rem;
-    min-width: 0;
-  }
-  .install-row code,
-  .resolution code {
-    font-family: ui-monospace, Consolas, monospace;
-    font-size: 0.72rem;
-    background: rgba(0, 0, 0, 0.05);
-    border-radius: 3px;
-    padding: 0.08rem 0.3rem;
-    color: var(--text-muted);
-    word-break: break-all;
-  }
-  .source {
-    border-radius: 3px;
-    padding: 0.08rem 0.35rem;
-    font-size: 0.7rem;
-    font-weight: 600;
-  }
-  .source.native {
-    background: rgba(37, 99, 235, 0.12);
-    color: #2563eb;
-  }
-  .source.npm {
-    background: rgba(147, 51, 234, 0.12);
-    color: #7e22ce;
-  }
-  .source.path {
-    background: rgba(22, 163, 74, 0.12);
-    color: var(--success);
-  }
-  .install-version {
-    color: var(--text);
-    font-weight: 500;
-  }
-  .resolution {
-    display: flex;
-    flex-direction: column;
-    gap: 0.3rem;
-    padding-top: 0.45rem;
-    border-top: 1px solid var(--border);
-    color: var(--text-muted);
-  }
-  .resolution strong {
-    color: var(--warning);
-    font-size: 0.78rem;
-  }
-  .resolution p {
-    line-height: 1.45;
-  }
-  .msg {
-    padding: 0.5rem 0.75rem;
-    border-radius: 4px;
-    font-size: 0.85rem;
-  }
-  .msg.success {
-    background: rgba(22, 163, 74, 0.1);
-    color: var(--success);
-  }
-  .msg.error {
-    background: rgba(220, 38, 38, 0.1);
-    color: var(--error);
-    word-break: break-word;
-    white-space: pre-wrap;
-    font-family: ui-monospace, Consolas, monospace;
-    font-size: 0.78rem;
-  }
-</style>

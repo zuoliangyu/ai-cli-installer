@@ -172,7 +172,7 @@ cargo tauri icon path/to/logo.png
 推 `v*` 标签触发 `release.yml`：
 
 ```sh
-git tag v0.1.0
+git tag v0.2.0
 git push --tags
 ```
 
@@ -206,7 +206,7 @@ cargo tauri signer generate -w ~/.tauri/myapp.key
 ## 代码风格
 
 - Rust：默认无注释，仅在非显然约束 / 易踩坑处加一行；错误统一走 `installer_core::error::AppError`
-- 前端：Svelte 5 Runes 模式（`$state` / `$derived` / `$props`）
+- 前端：Svelte 5 Runes 模式（`$state` / `$derived` / `$props`）+ Tailwind CSS（Cerulean Flow 主题，与 [AI Session Viewer](https://github.com/zuoliangyu/AI-Session-Viewer) 同款配色）
 - 跨语言类型：手写在 `src/lib/types.ts`，与 Rust struct 对齐（不引入自动生成）
 - Web 模式与 Tauri 模式的 API 形状必须保持一致，新加 command 时同时改 `tauriApi.ts` + `webApi.ts` + `api.ts` 的 bind 列表 + `installer-web/src/routes.rs`
 

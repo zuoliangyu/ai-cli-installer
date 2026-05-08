@@ -1,16 +1,17 @@
 <script lang="ts">
+  import { onMount } from "svelte";
   import ToolCard from "./lib/components/ToolCard.svelte";
-  import MirrorStatus from "./lib/components/MirrorStatus.svelte";
-  import About from "./lib/components/About.svelte";
   import PresetSection from "./lib/components/PresetSection.svelte";
   import FixesSection from "./lib/components/FixesSection.svelte";
+  import About from "./lib/components/About.svelte";
+  import Sidebar from "./lib/components/Sidebar.svelte";
   import { tools } from "./lib/stores";
-  import { onMount } from "svelte";
   import { initApp } from "./lib/api";
+  import { page } from "./lib/page";
+  import "./lib/theme";
 
   let appReady = $state(false);
   let initError = $state<string | null>(null);
-  let aboutOpen = $state(false);
 
   onMount(async () => {
     try {
@@ -20,100 +21,52 @@
       initError = err instanceof Error ? err.message : String(err);
     }
   });
+
+  const titles = {
+    tools: "CLI 工具",
+    presets: "中转预设",
+    fixes: "配置修复",
+    about: "关于",
+  } as const;
 </script>
 
-<main>
-  <header>
-    <h1>AI CLI Installer</h1>
-    <MirrorStatus />
-  </header>
+<div class="flex h-screen overflow-hidden">
+  <Sidebar />
 
-  {#if initError}
-    <div class="error-banner">初始化失败：{initError}</div>
-  {:else if !appReady}
-    <div class="loading">正在加载…</div>
-  {:else}
-    <section class="tools">
-      {#each $tools as tool (tool.id)}
-        <ToolCard {tool} />
-      {/each}
-    </section>
+  <main class="flex-1 min-w-0 overflow-y-auto">
+    {#if initError}
+      <div class="m-6 px-4 py-3 rounded-md text-sm bg-destructive/10 text-destructive">
+        初始化失败：{initError}
+      </div>
+    {:else if !appReady}
+      <div class="flex h-full items-center justify-center text-sm text-muted-foreground">
+        正在加载…
+      </div>
+    {:else}
+      <div class="max-w-3xl mx-auto p-6 flex flex-col gap-6">
+        <header class="pb-3 border-b border-border">
+          <h1 class="text-lg font-semibold text-foreground">{titles[$page]}</h1>
+        </header>
 
-    <PresetSection />
-
-    <FixesSection />
-  {/if}
-
-  <footer>
-    <button class="footer-btn" onclick={() => (aboutOpen = true)}>
-      v{__APP_VERSION__} · 关于
-    </button>
-  </footer>
-</main>
-
-{#if aboutOpen}
-  <About ondismiss={() => (aboutOpen = false)} />
-{/if}
-
-<style>
-  main {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    max-width: 720px;
-    width: 100%;
-    margin: 0 auto;
-    padding: 1.5rem;
-    gap: 1rem;
-  }
-
-  header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding-bottom: 1rem;
-    border-bottom: 1px solid var(--border);
-  }
-
-  header h1 {
-    font-size: 1.4rem;
-    font-weight: 600;
-  }
-
-  .tools {
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-  }
-
-  .loading,
-  .error-banner {
-    padding: 2rem;
-    text-align: center;
-    color: var(--text-muted);
-  }
-
-  .error-banner {
-    color: var(--error);
-  }
-
-  footer {
-    margin-top: auto;
-    text-align: center;
-    padding-top: 1rem;
-  }
-  .footer-btn {
-    background: none;
-    border: none;
-    padding: 0.25rem 0.5rem;
-    color: var(--text-muted);
-    font-size: 0.85rem;
-    cursor: pointer;
-    border-radius: 4px;
-    transition: background 0.15s;
-  }
-  .footer-btn:hover {
-    background: rgba(0, 0, 0, 0.05);
-    color: var(--text);
-  }
-</style>
+        {#if $page === "tools"}
+          <section class="flex flex-col gap-3">
+            {#each $tools as tool (tool.id)}
+              <ToolCard {tool} />
+            {/each}
+            {#if $tools.length === 0}
+              <div class="px-3 py-6 text-center text-xs text-muted-foreground border border-dashed border-border rounded-md">
+                没有可用的 CLI 工具。
+              </div>
+            {/if}
+          </section>
+        {:else if $page === "presets"}
+          <PresetSection />
+        {:else if $page === "fixes"}
+          <FixesSection />
+        {:else if $page === "about"}
+          <About />
+        {/if}
+      </div>
+    {/if}
+  </main>
+</div>
