@@ -4,8 +4,12 @@
   import { theme, setTheme } from "../theme";
   import { mirrorProbes } from "../stores";
   import { probeMirrors } from "../api";
+  import { updateState } from "../updateStore";
 
   let probing = $state(false);
+  let hasUpdate = $derived(
+    $updateState.status === "available" && !$updateState.dismissed
+  );
 
   async function rerunProbe() {
     probing = true;
@@ -104,7 +108,19 @@
   <!-- Footer -->
   <div class="p-3 border-t border-border">
     <div class="flex items-center justify-between gap-2">
-      <span class="text-xs text-muted-foreground font-mono">v{__APP_VERSION__}</span>
+      <button
+        onclick={() => navigate("about")}
+        class="inline-flex items-center gap-1.5 text-xs text-muted-foreground font-mono hover:text-foreground transition-colors"
+        title={hasUpdate ? `有新版本 v${$updateState.newVersion ?? ""}` : "查看版本/关于"}
+      >
+        <span>v{__APP_VERSION__}</span>
+        {#if hasUpdate}
+          <span class="relative flex h-2 w-2" aria-hidden="true">
+            <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75"></span>
+            <span class="relative inline-flex rounded-full h-2 w-2 bg-primary"></span>
+          </span>
+        {/if}
+      </button>
       <div class="flex rounded-md bg-muted p-0.5">
         <button
           onclick={() => setTheme("light")}

@@ -4,6 +4,24 @@
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-05-08
+
+### 新增：手动检查更新 + 启动自动检查
+
+后端的 `tauri-plugin-updater` 早就配好了 endpoint 和 pubkey，但前端从来没接进去。这版接上，参考同系列 [AI Session Viewer](https://github.com/zuoliangyu/AI-Session-Viewer) 的设计：
+
+- **启动 1.5 秒后静默检查**一次（避开 `list_tools` 的网络抢资源），发现新版本弹系统对话框「立即更新 / 暂不更新」，点更新就走 `downloadAndInstall` → `relaunch`
+- **关于页 → 项目卡片**新增 `UpdateIndicator` 区块：当前版本号、手动「检查更新」按钮、release notes 预览、下载进度条、安装中、失败重试等所有状态
+- **Sidebar 底部版本号**改为可点击按钮，跳到关于页；有新版本时旁边显示青色 ping 小点
+- **右下角浮窗 `UpdateToast`**：发现新版且未 dismiss 时悬浮显示「v X → v Y / 更新并重启 / 忽略」
+- 「忽略此版本」会写 `localStorage`（`aci_update_dismissed_version`），同版本不再二次打扰；下次有更高版本再次提示
+
+### 内部
+
+- 新增 `src/lib/updateStore.ts`：Svelte writable + `loadCurrentVersion` / `checkForUpdate` / `downloadAndInstall` / `openDownloadPage` / `dismiss` / `runStartupCheck` 一组 action
+- 新增 `src/lib/components/UpdateIndicator.svelte`、`UpdateToast.svelte`
+- 复用已有的 `@tauri-apps/plugin-updater` + `@tauri-apps/plugin-process` + `@tauri-apps/plugin-dialog`（package.json 之前就装了）
+
 ## [0.2.2] - 2026-05-08
 
 ### 修复

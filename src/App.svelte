@@ -5,9 +5,11 @@
   import FixesSection from "./lib/components/FixesSection.svelte";
   import About from "./lib/components/About.svelte";
   import Sidebar from "./lib/components/Sidebar.svelte";
+  import UpdateToast from "./lib/components/UpdateToast.svelte";
   import { tools } from "./lib/stores";
   import { initApp } from "./lib/api";
   import { page } from "./lib/page";
+  import { runStartupCheck } from "./lib/updateStore";
   import "./lib/theme";
 
   let appReady = $state(false);
@@ -20,6 +22,8 @@
     } catch (err) {
       initError = err instanceof Error ? err.message : String(err);
     }
+    // 不阻塞 UI；失败也不影响主流程
+    runStartupCheck().catch(() => {});
   });
 
   const titles = {
@@ -69,4 +73,5 @@
       </div>
     {/if}
   </main>
+  <UpdateToast />
 </div>

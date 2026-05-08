@@ -1,6 +1,7 @@
 <script lang="ts">
   import { open as openExternal } from "@tauri-apps/plugin-shell";
   import { Mail, Users, ExternalLink, Heart } from "lucide-svelte";
+  import UpdateIndicator from "./UpdateIndicator.svelte";
 
   const AUTHOR = "左岚";
   const EMAIL = "zuolan1102@qq.com";
@@ -26,15 +27,12 @@
     </p>
   </header>
 
-  <!-- Project info -->
+  <!-- Project info + version / update -->
   <div class="flex flex-col gap-3 p-4 rounded-md border border-border bg-card">
     <h3 class="text-sm font-semibold text-foreground">项目</h3>
     <dl class="grid grid-cols-[80px_1fr] gap-y-2 gap-x-3 text-sm">
       <dt class="text-muted-foreground">名称</dt>
       <dd class="text-foreground">AI CLI Installer</dd>
-
-      <dt class="text-muted-foreground">版本</dt>
-      <dd class="text-foreground font-mono">v{__APP_VERSION__}</dd>
 
       <dt class="text-muted-foreground">主页</dt>
       <dd>
@@ -50,6 +48,9 @@
         </button>
       </dd>
     </dl>
+    <div class="border-t border-border pt-3">
+      <UpdateIndicator />
+    </div>
   </div>
 
   <!-- Author / contact -->
