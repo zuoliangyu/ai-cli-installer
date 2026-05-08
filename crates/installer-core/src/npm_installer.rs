@@ -12,10 +12,10 @@
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use tokio::process::Command;
 
 use crate::error::{AppError, Result};
 use crate::mirrors::{Mirror, MirrorList};
+use crate::proc::shell_command;
 use crate::verifier;
 
 const DEFAULT_REGISTRY: &str = "https://registry.npmmirror.com";
@@ -29,7 +29,7 @@ pub struct NodeInfo {
 
 /// Detect Node + npm. Errors if Node not on PATH or unparseable.
 pub async fn detect_node() -> Result<NodeInfo> {
-    let node_out = Command::new("node")
+    let node_out = shell_command("node")
         .arg("--version")
         .output()
         .await
@@ -55,7 +55,7 @@ pub async fn detect_node() -> Result<NodeInfo> {
         .and_then(|s| s.parse().ok())
         .ok_or_else(|| AppError::Other(format!("无法解析 Node 版本: {}", node_version)))?;
 
-    let npm_version = Command::new("npm")
+    let npm_version = shell_command("npm")
         .arg("--version")
         .output()
         .await
@@ -75,7 +75,7 @@ pub async fn detect_node() -> Result<NodeInfo> {
 pub async fn install_global(package: &str, registry: Option<&str>) -> Result<String> {
     let reg = registry.unwrap_or(DEFAULT_REGISTRY);
 
-    let output = Command::new("npm")
+    let output = shell_command("npm")
         .args(["install", "-g", package, "--registry", reg])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -278,7 +278,7 @@ pub async fn install_via_mirror_tarballs(
 
     // Cache the platform tarball (works for both Claude's separate-package
     // scheme and Codex's version-alias scheme).
-    let cache_out = Command::new("npm")
+    let cache_out = shell_command("npm")
         .args(["cache", "add", plat_path.to_str().unwrap_or("")])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -293,7 +293,7 @@ pub async fn install_via_mirror_tarballs(
     }
 
     // Install main, optionalDeps resolved from our cache
-    let install_out = Command::new("npm")
+    let install_out = shell_command("npm")
         .args([
             "install",
             "-g",
@@ -333,7 +333,7 @@ fn npm_stage_dir(version: &str) -> Result<PathBuf> {
 /// where the installed binary lives (so we can show a sensible install_path).
 pub async fn npm_global_bin() -> Result<String> {
     // npm 9+ removed `npm bin -g`. Use `npm prefix -g` + /bin (Unix) or root (Win).
-    let prefix_out = Command::new("npm")
+    let prefix_out = shell_command("npm")
         .args(["prefix", "-g"])
         .output()
         .await

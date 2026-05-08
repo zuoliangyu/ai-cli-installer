@@ -200,8 +200,10 @@ impl Tool for ClaudeCode {
                 }
             }
         }
-        // 2. Fallback: probe whatever's on PATH (npm-installed binary lands here)
-        run_version(std::path::Path::new("claude")).await
+        // 2. Resolve via `where`/`command -v` and run `--version` (handles
+        // .cmd shims on Windows that bare Command::new("claude") misses).
+        let resolved = crate::proc::resolve_command_path("claude").await?;
+        run_version(&resolved).await
     }
 
     async fn install(
@@ -224,15 +226,7 @@ impl Tool for ClaudeCode {
 }
 
 async fn run_version(path: &std::path::Path) -> Option<String> {
-    let output = tokio::process::Command::new(path)
-        .arg("--version")
-        .output()
-        .await
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let s = String::from_utf8_lossy(&output.stdout).to_string();
+    let s = crate::proc::run_executable(path, &["--version"]).await?;
     // Format examples: "2.1.132 (Claude Code)"
     s.split_whitespace().next().map(String::from)
 }

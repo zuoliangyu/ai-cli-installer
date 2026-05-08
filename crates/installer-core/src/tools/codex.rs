@@ -201,7 +201,10 @@ impl Tool for CodexCli {
                 }
             }
         }
-        run_version(std::path::Path::new("codex")).await
+        // 兜底：通过 `where`/`command -v` 解析 PATH 上的 codex（含 .cmd shim），
+        // 再 cmd /c 跑 --version。这样 nvm-windows / npm-cmd 这类场景能命中。
+        let resolved = crate::proc::resolve_command_path("codex").await?;
+        run_version(&resolved).await
     }
 
     async fn install(
@@ -224,15 +227,7 @@ impl Tool for CodexCli {
 }
 
 async fn run_version(path: &std::path::Path) -> Option<String> {
-    let output = tokio::process::Command::new(path)
-        .arg("--version")
-        .output()
-        .await
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let s = String::from_utf8_lossy(&output.stdout).to_string();
+    let s = crate::proc::run_executable(path, &["--version"]).await?;
     // Format examples: "codex-cli 0.128.0" or "0.128.0"
     s.split_whitespace()
         .find(|w| w.chars().next().is_some_and(|c| c.is_ascii_digit()))

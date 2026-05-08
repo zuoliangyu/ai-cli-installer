@@ -93,19 +93,30 @@ pub async fn list_tools(state: &AppState) -> Result<Vec<ToolDescriptor>> {
     let (cc_stable, cc_falls_back) = resolve_stable(cc_stable, &cc_latest);
     let (cx_stable, cx_falls_back) = resolve_stable(cx_stable, &cx_latest);
 
-    cd.installed_version = cc_installed;
+    cd.installed_version = cc_installed.or_else(|| installed_from(&cc_installations));
     cd.latest_version = cc_latest;
     cd.stable_version = cc_stable;
     cd.stable_falls_back_to_latest = cc_falls_back;
     cd.installations = cc_installations;
 
-    xd.installed_version = cx_installed;
+    xd.installed_version = cx_installed.or_else(|| installed_from(&cx_installations));
     xd.latest_version = cx_latest;
     xd.stable_version = cx_stable;
     xd.stable_falls_back_to_latest = cx_falls_back;
     xd.installations = cx_installations;
 
     Ok(vec![cd, xd])
+}
+
+/// `Tool::detect_installed` 通过 `where`/`command -v` 跑 --version；遇到桌面进程
+/// PATH 不全或 .cmd shim 解析失败时会返空。诊断流程已经扫到了 install，就以
+/// 「current_path → 任一带版本号」的优先级反推一个版本号填进顶部"已安装"。
+fn installed_from(installs: &[install_diagnostics::ToolInstallation]) -> Option<String> {
+    installs
+        .iter()
+        .find(|i| i.current_path && i.version.is_some())
+        .or_else(|| installs.iter().find(|i| i.version.is_some()))
+        .and_then(|i| i.version.clone())
 }
 
 pub async fn list_mirrors(state: &AppState) -> Result<MirrorList> {

@@ -21,6 +21,7 @@ pub mod mirrors;
 pub mod npm_installer;
 pub mod platform;
 pub mod presets;
+pub mod proc;
 pub mod progress;
 pub mod tools;
 pub mod upstream;

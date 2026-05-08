@@ -1,11 +1,21 @@
 export type InstallMethod = "native" | "npm";
-export type InstallationSource = "native" | "npm_global" | "path";
+export type InstallationSource =
+  | "native"
+  | "npm_global"
+  | "pnpm"
+  | "yarn"
+  | "bun"
+  | "nvm"
+  | "path";
 
 export interface ToolInstallation {
   source: InstallationSource;
   version: string | null;
   path: string | null;
+  /** `where <cmd>` 当前解析到这一项 */
   current_path: boolean;
+  /** 该项目录在 PATH 中（即便不是当前 winner） */
+  on_path: boolean;
   managed: boolean;
 }
 

@@ -114,12 +114,20 @@
   function sourceLabel(source: InstallationSource): string {
     if (source === "native") return "Native";
     if (source === "npm_global") return "npm 全局";
+    if (source === "pnpm") return "pnpm 全局";
+    if (source === "yarn") return "yarn 全局";
+    if (source === "bun") return "bun 全局";
+    if (source === "nvm") return "nvm";
     return "PATH";
   }
 
   function sourceClass(source: InstallationSource): string {
     if (source === "native") return "bg-primary/15 text-primary";
     if (source === "npm_global") return "bg-purple-500/15 text-purple-500 dark:text-purple-300";
+    if (source === "pnpm") return "bg-amber-500/15 text-amber-600 dark:text-amber-300";
+    if (source === "yarn") return "bg-blue-500/15 text-blue-600 dark:text-blue-300";
+    if (source === "bun") return "bg-pink-500/15 text-pink-600 dark:text-pink-300";
+    if (source === "nvm") return "bg-emerald-500/15 text-emerald-600 dark:text-emerald-300";
     return "bg-success/15 text-success";
   }
 
@@ -142,6 +150,26 @@
       installs.filter((item) => item.source !== "path").map((item) => item.source)
     );
     return paths.size > 1 || nonPathSources.size > 1;
+  }
+
+  function shadowedInstalls(): ToolInstallation[] {
+    return (tool.installations ?? []).filter(
+      (i) => !i.current_path && !i.on_path && Boolean(i.path)
+    );
+  }
+
+  function hasNoCurrentPath(): boolean {
+    const installs = tool.installations ?? [];
+    return installs.length > 0 && installs.every((i) => !i.current_path);
+  }
+
+  /** launcher_dir 是「本应用的 native 安装目录」(~/.local/bin)。只有用户在用
+   * native 安装、或还没装任何东西时才有意义；如果用户走的是 npm/pnpm/yarn/bun
+   * 等其它 shim，把那行藏掉避免"加入系统 PATH"的按钮误导。 */
+  function shouldShowLauncherPath(): boolean {
+    const installs = tool.installations ?? [];
+    if (installs.length === 0) return true;
+    return Boolean(nativeInstallation());
   }
 </script>
 
@@ -254,6 +282,14 @@
             </span>
             {#if item.current_path}
               <span class="text-[10px] px-1.5 py-0.5 rounded bg-success/15 text-success">当前 PATH</span>
+            {:else if item.on_path}
+              <span class="text-[10px] px-1.5 py-0.5 rounded bg-warning/15 text-warning" title="目录在 PATH 中但被同名命令拦截">
+                被遮蔽
+              </span>
+            {:else}
+              <span class="text-[10px] px-1.5 py-0.5 rounded bg-destructive/15 text-destructive" title="该目录未加入 PATH，运行命令时找不到">
+                未在 PATH
+              </span>
             {/if}
             {#if item.managed}
               <span class="text-[10px] px-1.5 py-0.5 rounded bg-primary/15 text-primary">本应用路径</span>
@@ -269,6 +305,33 @@
           </div>
         {/each}
       </div>
+
+      {#if hasNoCurrentPath()}
+        <div class="flex flex-col gap-1.5 pt-2 border-t border-border">
+          <strong class="text-[11px] text-destructive font-semibold">PATH 提示</strong>
+          <p class="leading-relaxed text-muted-foreground">
+            检测到 {tool.installations.length} 处安装，但都不在当前 PATH。终端运行
+            <code class="font-mono bg-muted px-1 py-0.5 rounded text-foreground">{tool.id === "claude" ? "claude" : tool.id}</code>
+            时会找不到命令；可使用上面的「一键加入系统 PATH」按钮，或选其中一处的目录手动加进 PATH。
+          </p>
+        </div>
+      {:else if shadowedInstalls().length > 0}
+        <div class="flex flex-col gap-1.5 pt-2 border-t border-border">
+          <strong class="text-[11px] text-warning font-semibold">PATH 提示</strong>
+          <p class="leading-relaxed text-muted-foreground">
+            以下 {shadowedInstalls().length} 处安装的目录不在 PATH 中，调用时会被「当前 PATH」那一项接管：
+          </p>
+          <ul class="list-disc list-inside space-y-0.5">
+            {#each shadowedInstalls() as item}
+              <li class="text-muted-foreground">
+                <span class="font-semibold">{sourceLabel(item.source)}</span>
+                {#if item.version} v{item.version}{/if}
+                — <code class="font-mono bg-muted px-1 py-0.5 rounded text-foreground break-all">{item.path}</code>
+              </li>
+            {/each}
+          </ul>
+        </div>
+      {/if}
 
       {#if hasInstallationConflict()}
         <div class="flex flex-col gap-1.5 pt-2 border-t border-border text-muted-foreground">
@@ -293,8 +356,8 @@
     </div>
   {/if}
 
-  <!-- PATH row -->
-  {#if pathStatus}
+  <!-- PATH row（仅当与 native 安装相关） -->
+  {#if pathStatus && shouldShowLauncherPath()}
     <div class="flex items-center justify-between gap-3 px-3 py-2 rounded-md bg-muted/40">
       <div class="flex flex-col gap-1 min-w-0">
         <code class="font-mono text-[11px] text-muted-foreground truncate" title={pathStatus.dir}>

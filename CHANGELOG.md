@@ -4,6 +4,36 @@
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-05-08
+
+### 安装诊断更鲁棒，覆盖 pnpm / yarn / bun / nvm
+
+`detect_installed` 之前在 Windows 走 `Command::new("codex")` 直接 spawn，碰到 `.cmd` shim、桌面进程 PATH 不全、nvm-windows 这些场景会失败 → 顶部显示"未安装"，但实际机器上是有的。这版把整条命令调用链统一收口到 `crate::proc`，并扩展了诊断来源。
+
+### 新增
+
+- **pnpm / yarn / bun / nvm 检测**：诊断列表里独立标识各家全局安装，分别带颜色徽章（pnpm 琥珀 / yarn 蓝 / bun 粉 / nvm 翠绿）
+  - pnpm 走 `pnpm bin -g`，yarn 走 `yarn global bin`，bun 读 `BUN_INSTALL` 环境变量或 `~/.bun/bin`
+  - nvm 扫 `~/.nvm/versions/node/*/bin/<cmd>`（Mac/Linux）和 `%APPDATA%\nvm\v*\<cmd>(.cmd|.exe|.ps1)`（Windows nvm-windows）
+- **PATH 状态徽章**：每条 install 行新增三态——绿色「当前 PATH」/ 黄色「被遮蔽」/ 红色「未在 PATH」
+- **PATH 提示区块**：当所有安装都不在 PATH，红色提示提醒命令在终端会找不到；当有部分被遮蔽，黄色列出被同名命令拦截的来源
+- **`crate::proc` 模块**：`shell_command` / `run_executable` / `resolve_command_path`，统一在 Windows 下走 `cmd /c` 来跑 `.cmd`/`.bat` shim；解决 `Command::new("npm")` 在 Tauri 桌面进程下不可靠的问题
+
+### 改动
+
+- `tools/codex.rs`、`tools/claude_code.rs` 的 `detect_installed`：从直接 spawn `codex` / `claude` 改为先 `where`/`command -v` 解析路径再 `cmd /c <path> --version`
+- `npm_installer.rs` 全部 `Command::new("npm"|"node")` 收口到 `shell_command`（影响 `npm prefix -g` / `npm list -g` / `npm cache add` / `npm install -g`）
+- `detect_npm_global` 加 fallback：`npm list -g` 失败也会扫已知 npm 全局 bin 目录（`%APPDATA%\npm`、`%APPDATA%\nvm\nodejs`、`~/.npm-global/bin`、`/usr/local/bin`、`/opt/homebrew/bin`），找到 shim 就跑 `--version` 拿版本号
+- `Tool::detect_installed` 返空时，`list_tools` 从 `installations` 反推 `installed_version`（按 current_path → 任一带版本的优先级），避免顶部「未安装」与诊断「找到 v0.x.x」不一致
+- `where`/`command -v` 解析失败但仅有一条 install 在 PATH 中时，自动认定其为 PATH winner（标 `current_path=true`），避免错标"被遮蔽"
+- `ToolInstallation` 新增 `on_path: bool` 字段（与 `current_path` 区分：在 PATH 但未 winning）
+- 隐藏 launcher_dir PATH 行（一键加入系统 PATH 按钮）当用户没有 native 安装时——npm/pnpm/yarn/bun 用户不需要这步
+
+### 修复
+
+- Windows 上 npm 装的 codex/claude 顶部一直显示"未安装"
+- `where` 解析失败时全部 install 都被错标"被遮蔽"
+
 ## [0.2.0] - 2026-05-08
 
 ### UI 重构：与 AI Session Viewer 对齐设计语言
