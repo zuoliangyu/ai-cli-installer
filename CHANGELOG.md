@@ -4,6 +4,17 @@
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-05-08
+
+### 修复
+
+- **启动时不再闪 cmd 黑窗群**：Windows 下 `list_tools` 在初始化时会并发 spawn 数个 `cmd /c npm` / `cmd /c pnpm` / `where` 等 console 子进程，每个都会闪一个黑窗。给所有 spawn 加上 `CREATE_NO_WINDOW (0x08000000)` 创建标志，子进程依然能正常 IPC，但不再出现窗口。
+
+### 内部
+
+- `crate::proc` 新增 `silence_windows` / `silence_windows_std` 两个公共 helper，对外暴露给 `tokio::process::Command` 和 `std::process::Command` 两种调用方
+- 静默覆盖：诊断/检测路径（`shell_command` / `run_executable` / `resolve_command_path`）、`env_manager::windows` 的 PowerShell（系统 PATH 用 UAC outer + 用户 PATH 用 local）、`installer::run_self_install` 的 `claude install`、`app_state::open_path_with_system` 的 `cmd /c start`
+
 ## [0.2.1] - 2026-05-08
 
 ### 安装诊断更鲁棒，覆盖 pnpm / yarn / bun / nvm

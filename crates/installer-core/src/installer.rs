@@ -31,6 +31,7 @@ pub async fn run_self_install(binary: &Path, target: Option<&str>) -> Result<Str
     if let Some(t) = target {
         cmd.arg(t);
     }
+    crate::proc::silence_windows(&mut cmd);
     let output = cmd
         .output()
         .await

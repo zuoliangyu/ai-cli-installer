@@ -8,6 +8,8 @@
 use std::path::Path;
 use std::process::Stdio;
 use tokio::process::Command;
+
+use crate::proc::silence_windows;
 use winreg::enums::*;
 use winreg::RegKey;
 
@@ -74,18 +76,20 @@ async fn run_elevated_powershell(script: &str) -> Result<()> {
         script_lit = ps_single_quote(script)
     );
 
-    let output = Command::new("powershell")
-        .args([
-            "-NoProfile",
-            "-NonInteractive",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-Command",
-            &outer,
-        ])
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+    let mut cmd = Command::new("powershell");
+    cmd.args([
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        &outer,
+    ])
+    .stdin(Stdio::null())
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped());
+    silence_windows(&mut cmd);
+    let output = cmd
         .output()
         .await
         .map_err(|e| AppError::Other(format!("spawn powershell: {}", e)))?;
@@ -182,18 +186,20 @@ pub async fn remove(dir: &Path, scope: PathScope) -> Result<()> {
 }
 
 async fn run_local_powershell(script: &str) -> Result<()> {
-    let output = Command::new("powershell")
-        .args([
-            "-NoProfile",
-            "-NonInteractive",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-Command",
-            script,
-        ])
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+    let mut cmd = Command::new("powershell");
+    cmd.args([
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        script,
+    ])
+    .stdin(Stdio::null())
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped());
+    silence_windows(&mut cmd);
+    let output = cmd
         .output()
         .await
         .map_err(|e| AppError::Other(format!("spawn powershell: {}", e)))?;

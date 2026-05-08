@@ -235,10 +235,10 @@ pub fn open_path(path: &str) -> Result<()> {
 fn open_path_with_system(path: &std::path::Path) -> Result<()> {
     #[cfg(target_os = "windows")]
     {
-        std::process::Command::new("cmd")
-            .args(["/c", "start", ""])
-            .arg(path)
-            .spawn()?;
+        let mut cmd = std::process::Command::new("cmd");
+        cmd.args(["/c", "start", ""]).arg(path);
+        crate::proc::silence_windows_std(&mut cmd);
+        cmd.spawn()?;
         return Ok(());
     }
 
