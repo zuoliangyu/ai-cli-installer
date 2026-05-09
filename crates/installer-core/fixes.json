@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "updated_at": "2026-05-07",
-  "comment": "Built-in fix recipes from OCC docs (https://docs.openclaudecode.cn). Each fix is a list of patches that get merged into ~/.claude/settings.json or ~/.claude.json.",
+  "updated_at": "2026-05-10",
+  "comment": "Built-in fix recipes from OCC docs (https://docs.openclaudecode.cn) and Claude Code docs (https://code.claude.com/docs/en/settings). Each fix is a list of patches that get merged into ~/.claude/settings.json or ~/.claude.json.",
   "fixes": [
     {
       "id": "cc-006-disable-betas",
@@ -42,6 +42,137 @@
           "target": "claude_json",
           "path": "hasCompletedOnboarding",
           "value": true
+        }
+      ]
+    },
+    {
+      "id": "enable-powershell-tool",
+      "code": "CC-WIN",
+      "title": "启用 PowerShell 工具",
+      "description": "允许 Claude Code 使用 PowerShell 工具。Windows + Git Bash 环境可用来主动开启原生 PowerShell；Linux/macOS/WSL 需确保 pwsh 在 PATH 中。",
+      "doc_url": "https://code.claude.com/docs/en/env-vars",
+      "patches": [
+        {
+          "target": "claude_settings",
+          "path": "env.CLAUDE_CODE_USE_POWERSHELL_TOOL",
+          "value": "1"
+        }
+      ]
+    },
+    {
+      "id": "default-shell-powershell",
+      "code": "CC-WIN",
+      "title": "将 ! 命令默认改为 PowerShell",
+      "description": "把输入框里的 ! 命令默认交给 PowerShell 执行。适合主要使用 PowerShell 的 Windows 用户；需要同时启用 PowerShell 工具。",
+      "doc_url": "https://code.claude.com/docs/en/settings",
+      "patches": [
+        {
+          "target": "claude_settings",
+          "path": "defaultShell",
+          "value": "powershell"
+        },
+        {
+          "target": "claude_settings",
+          "path": "env.CLAUDE_CODE_USE_POWERSHELL_TOOL",
+          "value": "1"
+        }
+      ]
+    },
+    {
+      "id": "maintain-project-working-dir",
+      "code": "CC-SHELL",
+      "title": "命令执行后回到项目目录",
+      "description": "让 Claude Code 的 Bash 或 PowerShell 命令执行后回到会话最初的工作目录，减少 cd 到子目录后影响后续命令的情况。",
+      "doc_url": "https://code.claude.com/docs/en/env-vars",
+      "patches": [
+        {
+          "target": "claude_settings",
+          "path": "env.CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR",
+          "value": "1"
+        }
+      ]
+    },
+    {
+      "id": "disable-bypass-permissions-mode",
+      "code": "CC-SAFE",
+      "title": "禁用跳过权限模式",
+      "description": "阻止 Claude Code 启用 bypassPermissions 模式，同时禁用 --dangerously-skip-permissions，降低误进入高风险权限模式的可能。",
+      "doc_url": "https://code.claude.com/docs/en/settings",
+      "patches": [
+        {
+          "target": "claude_settings",
+          "path": "permissions.disableBypassPermissionsMode",
+          "value": "disable"
+        }
+      ]
+    },
+    {
+      "id": "scrub-subprocess-env",
+      "code": "CC-SAFE",
+      "title": "子进程环境变量脱敏",
+      "description": "从 Bash、PowerShell、hooks、MCP stdio 子进程环境中剥离 Anthropic 和云厂商凭据，降低命令执行时泄露密钥的风险。Linux 上会启用额外进程隔离。",
+      "doc_url": "https://code.claude.com/docs/en/env-vars",
+      "patches": [
+        {
+          "target": "claude_settings",
+          "path": "env.CLAUDE_CODE_SUBPROCESS_ENV_SCRUB",
+          "value": "1"
+        }
+      ]
+    },
+    {
+      "id": "disable-nonessential-traffic",
+      "code": "CC-NET",
+      "title": "关闭非必要外联",
+      "description": "一次性关闭自动更新、反馈命令、错误上报和遥测，适合对离线、隐私或网络稳定性要求更高的环境。",
+      "doc_url": "https://code.claude.com/docs/en/env-vars",
+      "patches": [
+        {
+          "target": "claude_settings",
+          "path": "env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
+          "value": "1"
+        }
+      ]
+    },
+    {
+      "id": "disable-auto-updater",
+      "code": "CC-NET",
+      "title": "关闭后台自动更新",
+      "description": "禁用 Claude Code 后台自动更新，保留手动 claude update 能力。适合希望由安装器或包管理器统一管理版本的环境。",
+      "doc_url": "https://code.claude.com/docs/en/env-vars",
+      "patches": [
+        {
+          "target": "claude_settings",
+          "path": "env.DISABLE_AUTOUPDATER",
+          "value": "1"
+        }
+      ]
+    },
+    {
+      "id": "disable-alternate-screen",
+      "code": "CC-TUI",
+      "title": "使用终端原生滚动区",
+      "description": "关闭 Claude Code 全屏 alternate screen 渲染，回到终端主屏幕滚动区，便于复制、搜索和排查渲染异常。",
+      "doc_url": "https://code.claude.com/docs/en/env-vars",
+      "patches": [
+        {
+          "target": "claude_settings",
+          "path": "env.CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN",
+          "value": "1"
+        }
+      ]
+    },
+    {
+      "id": "hide-startup-cwd",
+      "code": "CC-PRIVACY",
+      "title": "隐藏启动页工作目录",
+      "description": "隐藏 Claude Code 启动页中的当前工作目录，适合录屏、直播或截图时避免暴露用户名和本地路径。",
+      "doc_url": "https://code.claude.com/docs/en/env-vars",
+      "patches": [
+        {
+          "target": "claude_settings",
+          "path": "env.CLAUDE_CODE_HIDE_CWD",
+          "value": "1"
         }
       ]
     },

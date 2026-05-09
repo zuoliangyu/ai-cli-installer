@@ -8,8 +8,10 @@
 //! ## Loading order (v0.0.10+)
 //!
 //! 1. Try to fetch latest `fixes.json` from a list of remote URLs (raw GH +
-//!    GH proxies). 5s per-URL timeout. First success wins.
-//! 2. If all remote attempts fail → fall back to the build-time embedded copy.
+//!    GH proxies). 5s per-URL timeout. Remote wins only when its `updated_at`
+//!    is not older than the build-time embedded copy.
+//! 2. If all remote attempts fail, or the first successful remote payload is
+//!    stale → use the build-time embedded copy.
 //!
 //! That way adding/editing fixes is just: edit `fixes.json` on `main`, push,
 //! and existing app installs see the new list on next launch — no release
@@ -80,17 +82,34 @@ pub struct Fix {
 struct FixesFile {
     #[allow(dead_code)]
     version: u32,
+    #[allow(dead_code)]
+    updated_at: Option<String>,
+    #[allow(dead_code)]
+    comment: Option<String>,
     fixes: Vec<Fix>,
 }
 
 /// Try remote URLs in order, fall back to the build-time embedded JSON.
 pub async fn list_fixes(client: &reqwest::Client) -> Result<Vec<Fix>> {
+    let embedded = parse_embedded_file()?;
     for url in FIXES_REMOTE_URLS {
         match fetch_remote(client, url).await {
-            Ok(mut fixes) => {
+            Ok(remote) => {
+                let use_remote = remote_is_fresh_enough(&remote, &embedded);
+                let source = if use_remote {
+                    "remote"
+                } else {
+                    "embedded fallback (remote stale)"
+                };
+                let mut fixes = if use_remote {
+                    remote.fixes
+                } else {
+                    embedded.fixes.clone()
+                };
                 annotate_config_status(&mut fixes);
                 tracing::info!(
-                    "fixes loaded from remote: {} ({} entries)",
+                    "fixes loaded from {}: {} ({} entries)",
+                    source,
                     url,
                     fixes.len()
                 );
@@ -100,12 +119,12 @@ pub async fn list_fixes(client: &reqwest::Client) -> Result<Vec<Fix>> {
         }
     }
     tracing::info!("fixes: all remote sources failed, using embedded fallback");
-    let mut fixes = parse_embedded()?;
+    let mut fixes = embedded.fixes;
     annotate_config_status(&mut fixes);
     Ok(fixes)
 }
 
-async fn fetch_remote(client: &reqwest::Client, url: &str) -> Result<Vec<Fix>> {
+async fn fetch_remote(client: &reqwest::Client, url: &str) -> Result<FixesFile> {
     let resp = client
         .get(url)
         .timeout(Duration::from_secs(5))
@@ -115,13 +134,13 @@ async fn fetch_remote(client: &reqwest::Client, url: &str) -> Result<Vec<Fix>> {
     let bytes = resp.bytes().await?;
     let parsed: FixesFile = serde_json::from_slice(&bytes)
         .map_err(|e| AppError::Other(format!("remote fixes.json invalid: {}", e)))?;
-    Ok(parsed.fixes)
+    Ok(parsed)
 }
 
-fn parse_embedded() -> Result<Vec<Fix>> {
+fn parse_embedded_file() -> Result<FixesFile> {
     let parsed: FixesFile = serde_json::from_str(FIXES_JSON)
         .map_err(|e| AppError::Other(format!("embedded fixes.json invalid: {}", e)))?;
-    Ok(parsed.fixes)
+    Ok(parsed)
 }
 
 /// Sync helper that only reads the embedded copy. Used by `apply_selected`
@@ -129,7 +148,16 @@ fn parse_embedded() -> Result<Vec<Fix>> {
 /// call mid-apply). Future enhancement: cache last-good remote payload on
 /// disk so apply_selected sees the fresh definitions too.
 fn list_fixes_embedded() -> Result<Vec<Fix>> {
-    parse_embedded()
+    Ok(parse_embedded_file()?.fixes)
+}
+
+fn remote_is_fresh_enough(remote: &FixesFile, embedded: &FixesFile) -> bool {
+    match (remote.updated_at.as_deref(), embedded.updated_at.as_deref()) {
+        (Some(remote_date), Some(embedded_date)) => remote_date >= embedded_date,
+        (Some(_), None) => true,
+        (None, Some(_)) => false,
+        (None, None) => true,
+    }
 }
 
 fn annotate_config_status(fixes: &mut [Fix]) {
@@ -382,8 +410,17 @@ fn get_dotted_mut<'a>(
 
 #[cfg(test)]
 mod tests {
-    use super::{get_dotted, remove_dotted, set_dotted};
+    use super::{get_dotted, remote_is_fresh_enough, remove_dotted, set_dotted, FixesFile};
     use serde_json::json;
+
+    fn fixes_file(updated_at: Option<&str>) -> FixesFile {
+        FixesFile {
+            version: 1,
+            updated_at: updated_at.map(str::to_string),
+            comment: None,
+            fixes: vec![],
+        }
+    }
 
     #[test]
     fn reads_dotted_json_value() {
@@ -415,5 +452,19 @@ mod tests {
         let mut root = json!({ "env": { "DISABLE_TELEMETRY": "1" } });
         assert!(remove_dotted(&mut root, "env.DISABLE_TELEMETRY"));
         assert_eq!(get_dotted(&root, "env.DISABLE_TELEMETRY"), None);
+    }
+
+    #[test]
+    fn remote_fixes_can_replace_older_embedded_copy() {
+        let remote = fixes_file(Some("2026-05-10"));
+        let embedded = fixes_file(Some("2026-05-07"));
+        assert!(remote_is_fresh_enough(&remote, &embedded));
+    }
+
+    #[test]
+    fn stale_remote_fixes_do_not_replace_embedded_copy() {
+        let remote = fixes_file(Some("2026-05-07"));
+        let embedded = fixes_file(Some("2026-05-10"));
+        assert!(!remote_is_fresh_enough(&remote, &embedded));
     }
 }
