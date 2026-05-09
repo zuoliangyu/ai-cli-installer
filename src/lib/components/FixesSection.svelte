@@ -14,6 +14,9 @@
   let loadError = $state<string | null>(null);
   let filter = $state<"all" | "configured" | "pending">("all");
   let currentPage = $state(1);
+  let listViewport = $state<HTMLDivElement | null>(null);
+  let tagPanelOpen = $state(false);
+  let selectedTags = $state<Set<string>>(new Set());
 
   const pageSize = 10;
   const recommendedFixIds = new Set([
@@ -56,9 +59,13 @@
   }
 
   function filteredFixes(): Fix[] {
-    if (filter === "configured") return fixes.filter((fix) => fix.configured);
-    if (filter === "pending") return fixes.filter((fix) => !fix.configured);
-    return fixes;
+    let list = fixes;
+    if (filter === "configured") list = list.filter((fix) => fix.configured);
+    if (filter === "pending") list = list.filter((fix) => !fix.configured);
+    if (selectedTags.size === 0) return list;
+    return list.filter((fix) =>
+      fixTags(fix, false).some((tag) => selectedTags.has(tag.label))
+    );
   }
 
   function pageCount(): number {
@@ -74,14 +81,34 @@
   function setFilter(next: typeof filter) {
     filter = next;
     currentPage = 1;
+    scrollListTop();
+  }
+
+  function toggleTag(label: string) {
+    if (selectedTags.has(label)) selectedTags.delete(label);
+    else selectedTags.add(label);
+    selectedTags = new Set(selectedTags);
+    currentPage = 1;
+    scrollListTop();
+  }
+
+  function clearTags() {
+    selectedTags = new Set();
+    currentPage = 1;
+    scrollListTop();
   }
 
   function setPage(next: number) {
     currentPage = Math.min(Math.max(next, 1), pageCount());
+    scrollListTop();
   }
 
   function clampPage() {
     currentPage = Math.min(currentPage, pageCount());
+  }
+
+  function scrollListTop() {
+    listViewport?.scrollTo({ top: 0, behavior: "smooth" });
   }
 
   function configuredCount(): number {
@@ -101,7 +128,7 @@
     return JSON.stringify(v);
   }
 
-  function fixTags(fix: Fix): FixTag[] {
+  function fixTags(fix: Fix, limit = true): FixTag[] {
     const tags: FixTag[] = [];
     if (fix.id === "cc-017-skip-webfetch-preflight") {
       tags.push({ label: "国内网络推荐", tone: "primary" });
@@ -139,7 +166,19 @@
       tags.push({ label: "PowerShell", tone: "info" });
     }
 
-    return tags.slice(0, 3);
+    return limit ? tags.slice(0, 3) : tags;
+  }
+
+  function tagOptions(): (FixTag & { count: number })[] {
+    const options = new Map<string, FixTag & { count: number }>();
+    for (const fix of fixes) {
+      for (const tag of fixTags(fix, false)) {
+        const current = options.get(tag.label);
+        if (current) current.count += 1;
+        else options.set(tag.label, { ...tag, count: 1 });
+      }
+    }
+    return [...options.values()];
   }
 
   function tagClass(tone: FixTag["tone"]): string {
@@ -225,21 +264,62 @@
     </div>
   {:else}
     <!-- Filters -->
-    <div class="shrink-0 flex flex-wrap gap-1.5">
-      {#each [{ k: "all", l: `全部 ${fixes.length}` }, { k: "configured", l: `已配置 ${configuredCount()}` }, { k: "pending", l: `未配置 ${fixes.length - configuredCount()}` }] as f}
+    <div class="shrink-0 flex flex-col gap-2">
+      <div class="flex flex-wrap gap-1.5">
+        {#each [{ k: "all", l: `全部 ${fixes.length}` }, { k: "configured", l: `已配置 ${configuredCount()}` }, { k: "pending", l: `未配置 ${fixes.length - configuredCount()}` }] as f}
+          <button
+            onclick={() => setFilter(f.k as typeof filter)}
+            class="px-2.5 py-1 text-xs rounded-md border transition-colors {filter === f.k
+              ? 'border-primary bg-primary/10 text-primary'
+              : 'border-border text-muted-foreground hover:bg-accent/50 hover:text-foreground'}"
+          >
+            {f.l}
+          </button>
+        {/each}
         <button
-          onclick={() => setFilter(f.k as typeof filter)}
-          class="px-2.5 py-1 text-xs rounded-md border transition-colors {filter === f.k
+          onclick={() => (tagPanelOpen = !tagPanelOpen)}
+          class="px-2.5 py-1 text-xs rounded-md border transition-colors {tagPanelOpen || selectedTags.size > 0
             ? 'border-primary bg-primary/10 text-primary'
             : 'border-border text-muted-foreground hover:bg-accent/50 hover:text-foreground'}"
         >
-          {f.l}
+          标签筛选{selectedTags.size > 0 ? ` ${selectedTags.size}` : ""}
         </button>
-      {/each}
+        {#if selectedTags.size > 0}
+          <button
+            onclick={clearTags}
+            class="px-2.5 py-1 text-xs rounded-md border border-border text-muted-foreground hover:bg-accent/50 hover:text-foreground"
+          >
+            清除标签
+          </button>
+        {/if}
+      </div>
+
+      {#if tagPanelOpen}
+        <div class="rounded-md border border-border bg-muted/30 p-2">
+          <div class="flex flex-wrap gap-1.5">
+            {#each tagOptions() as tag}
+              <label
+                class="inline-flex items-center gap-1.5 px-2 py-1 rounded-md border text-xs cursor-pointer transition-colors {selectedTags.has(tag.label)
+                  ? 'border-primary bg-primary/10 text-primary'
+                  : 'border-border bg-background text-muted-foreground hover:text-foreground hover:bg-accent/50'}"
+              >
+                <input
+                  type="checkbox"
+                  checked={selectedTags.has(tag.label)}
+                  onchange={() => toggleTag(tag.label)}
+                  class="accent-primary"
+                />
+                <span class={tagClass(tag.tone)}>{tag.label}</span>
+                <span class="text-[10px] text-muted-foreground">{tag.count}</span>
+              </label>
+            {/each}
+          </div>
+        </div>
+      {/if}
     </div>
 
     <!-- List -->
-    <div class="min-h-0 flex-1 overflow-y-auto pr-1">
+    <div bind:this={listViewport} class="min-h-0 flex-1 overflow-y-auto pr-1">
       <ul class="flex flex-col gap-2">
         {#each pagedFixes() as fix (fix.id)}
           {@const tags = fixTags(fix)}
