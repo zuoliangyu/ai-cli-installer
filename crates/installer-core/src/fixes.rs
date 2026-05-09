@@ -74,6 +74,8 @@ pub struct Fix {
     pub doc_url: Option<String>,
     pub patches: Vec<Patch>,
     #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default)]
     pub configured: bool,
     #[serde(default)]
     pub configured_patches: usize,
@@ -432,7 +434,7 @@ fn get_dotted_mut<'a>(
 mod tests {
     use super::{
         cache_fixes, cached_fixes, get_dotted, remote_is_fresh_enough, remove_dotted, set_dotted,
-        Fix, FixesFile,
+        Fix, FixesFile, FIXES_CACHE,
     };
     use serde_json::json;
 
@@ -493,6 +495,7 @@ mod tests {
 
     #[test]
     fn caches_fix_definitions() {
+        *FIXES_CACHE.lock().unwrap() = None;
         cache_fixes(&[Fix {
             id: "sample".into(),
             code: "CC-TEST".into(),
@@ -500,6 +503,7 @@ mod tests {
             description: "Sample fix".into(),
             doc_url: None,
             patches: vec![],
+            tags: vec![],
             configured: true,
             configured_patches: 1,
             total_patches: 1,

@@ -9,6 +9,7 @@
       "title": "禁用实验性 Beta 参数",
       "description": "AWS 分组上游不接受 anthropic-beta 请求头，会返回 400 invalid beta flag。开启后 Claude Code 不再附加该头。",
       "doc_url": "https://docs.openclaudecode.cn/#/errors/cc-400-experimental-betas",
+      "tags": ["推荐"],
       "patches": [
         {
           "target": "claude_settings",
@@ -23,6 +24,7 @@
       "title": "跳过 WebFetch 预检（国内网络强烈推荐）",
       "description": "WebFetch 抓页面前会先请求 claude.ai 做域名预检；国内网络/防火墙拦掉后整个 WebFetch 失效。开启后跳过预检，直接抓目标页面。",
       "doc_url": "https://docs.openclaudecode.cn/#/errors/cc-webfetch-preflight-fail",
+      "tags": ["国内网络推荐"],
       "patches": [
         {
           "target": "claude_settings",
@@ -37,6 +39,7 @@
       "title": "标记 Onboarding 已完成（绕过首次启动连通性校验）",
       "description": "Claude Code 首次启动会向 api.anthropic.com 做连通性校验，不受中转地址影响，国内/中转用户被卡在登录前。该字段写入 ~/.claude.json 跳过此校验。",
       "doc_url": "https://docs.openclaudecode.cn/#/errors/cc-onboarding-connection-block",
+      "tags": ["推荐"],
       "patches": [
         {
           "target": "claude_json",
@@ -51,6 +54,7 @@
       "title": "启用 PowerShell 工具",
       "description": "允许 Claude Code 使用 PowerShell 工具。Windows + Git Bash 环境可用来主动开启原生 PowerShell；Linux/macOS/WSL 需确保 pwsh 在 PATH 中。",
       "doc_url": "https://code.claude.com/docs/en/env-vars",
+      "tags": ["Windows", "PowerShell"],
       "patches": [
         {
           "target": "claude_settings",
@@ -65,6 +69,7 @@
       "title": "将 ! 命令默认改为 PowerShell",
       "description": "把输入框里的 ! 命令默认交给 PowerShell 执行。适合主要使用 PowerShell 的 Windows 用户；如未启用 PowerShell 工具，请先单独应用对应配置。",
       "doc_url": "https://code.claude.com/docs/en/settings",
+      "tags": ["Windows", "PowerShell"],
       "patches": [
         {
           "target": "claude_settings",
@@ -79,6 +84,7 @@
       "title": "命令执行后回到项目目录",
       "description": "让 Claude Code 的 Bash 或 PowerShell 命令执行后回到会话最初的工作目录，减少 cd 到子目录后影响后续命令的情况。",
       "doc_url": "https://code.claude.com/docs/en/env-vars",
+      "tags": [],
       "patches": [
         {
           "target": "claude_settings",
@@ -93,6 +99,7 @@
       "title": "禁用跳过权限模式",
       "description": "阻止 Claude Code 启用 bypassPermissions 模式，同时禁用 --dangerously-skip-permissions，降低误进入高风险权限模式的可能。",
       "doc_url": "https://code.claude.com/docs/en/settings",
+      "tags": ["推荐", "安全"],
       "patches": [
         {
           "target": "claude_settings",
@@ -107,6 +114,7 @@
       "title": "子进程环境变量脱敏",
       "description": "从 Bash、PowerShell、hooks、MCP stdio 子进程环境中剥离 Anthropic 和云厂商凭据，降低命令执行时泄露密钥的风险。Linux 上会启用额外进程隔离。",
       "doc_url": "https://code.claude.com/docs/en/env-vars",
+      "tags": ["推荐", "安全"],
       "patches": [
         {
           "target": "claude_settings",
@@ -121,6 +129,7 @@
       "title": "关闭非必要外联",
       "description": "一次性关闭自动更新、反馈命令、错误上报和遥测，适合对离线、隐私或网络稳定性要求更高的环境。",
       "doc_url": "https://code.claude.com/docs/en/env-vars",
+      "tags": ["安全", "网络"],
       "patches": [
         {
           "target": "claude_settings",
@@ -135,6 +144,7 @@
       "title": "关闭后台自动更新",
       "description": "禁用 Claude Code 后台自动更新，保留手动 claude update 能力。适合希望由安装器或包管理器统一管理版本的环境。",
       "doc_url": "https://code.claude.com/docs/en/env-vars",
+      "tags": ["网络"],
       "patches": [
         {
           "target": "claude_settings",
@@ -149,6 +159,7 @@
       "title": "使用终端原生滚动区",
       "description": "关闭 Claude Code 全屏 alternate screen 渲染，回到终端主屏幕滚动区，便于复制、搜索和排查渲染异常。",
       "doc_url": "https://code.claude.com/docs/en/env-vars",
+      "tags": ["终端"],
       "patches": [
         {
           "target": "claude_settings",
@@ -163,6 +174,7 @@
       "title": "隐藏启动页工作目录",
       "description": "隐藏 Claude Code 启动页中的当前工作目录，适合录屏、直播或截图时避免暴露用户名和本地路径。",
       "doc_url": "https://code.claude.com/docs/en/env-vars",
+      "tags": ["隐私"],
       "patches": [
         {
           "target": "claude_settings",
@@ -177,6 +189,7 @@
       "title": "延长 API 请求超时",
       "description": "把 Claude Code 的 API 请求超时延长到 20 分钟，适合中转、弱网或长思考请求经常超时的环境。",
       "doc_url": "https://code.claude.com/docs/en/env-vars",
+      "tags": ["网络"],
       "patches": [
         {
           "target": "claude_settings",
@@ -191,6 +204,7 @@
       "title": "延长 MCP 首轮连接等待",
       "description": "延长首轮 MCP 连接等待时间，适合远程 MCP 网络抖动或首轮查询拿不到 MCP 工具的场景。",
       "doc_url": "https://code.claude.com/docs/en/env-vars",
+      "tags": ["MCP"],
       "patches": [
         {
           "target": "claude_settings",
@@ -205,6 +219,7 @@
       "title": "延长 MCP server 启动超时",
       "description": "延长单个 MCP server 启动超时，适合本地 MCP 冷启动慢或启动时需要初始化模型、数据库连接的场景。",
       "doc_url": "https://code.claude.com/docs/en/env-vars",
+      "tags": ["MCP"],
       "patches": [
         {
           "target": "claude_settings",
@@ -219,6 +234,7 @@
       "title": "提高 MCP 输出上限",
       "description": "把 MCP 工具响应上限提高到 50000 tokens，减少大结果被截断。适合数据库、文档检索等返回内容较多的 MCP 工具。",
       "doc_url": "https://code.claude.com/docs/en/env-vars",
+      "tags": ["MCP"],
       "patches": [
         {
           "target": "claude_settings",
@@ -233,6 +249,7 @@
       "title": "Glob 搜索遵守 .gitignore",
       "description": "让 Claude Code 的 Glob 搜索遵守 .gitignore，减少命中依赖缓存、构建产物或本地私有文件。",
       "doc_url": "https://code.claude.com/docs/en/env-vars",
+      "tags": ["隐私", "搜索"],
       "patches": [
         {
           "target": "claude_settings",
@@ -247,6 +264,7 @@
       "title": "使用系统原生文件搜索",
       "description": "让 Claude Code 使用系统原生命令做文件搜索。适合内置 ripgrep 不可用、被安全软件拦截或在特殊终端环境下行为异常的情况。",
       "doc_url": "https://code.claude.com/docs/en/env-vars",
+      "tags": ["搜索"],
       "patches": [
         {
           "target": "claude_settings",
@@ -261,6 +279,7 @@
       "title": "Grep 使用系统 ripgrep",
       "description": "关闭内置 ripgrep，改用系统 PATH 中的 rg。适合内置二进制被安全软件拦截、企业终端限制或系统已维护统一 rg 版本的环境。",
       "doc_url": "https://code.claude.com/docs/en/env-vars",
+      "tags": ["搜索"],
       "patches": [
         {
           "target": "claude_settings",
@@ -275,6 +294,7 @@
       "title": "禁用非流式降级重试",
       "description": "禁用 API 流式请求失败后的非流式降级。适合部分代理在流式中断时可能重复执行工具调用的场景。",
       "doc_url": "https://code.claude.com/docs/en/env-vars",
+      "tags": ["安全", "网络"],
       "patches": [
         {
           "target": "claude_settings",
@@ -289,6 +309,7 @@
       "title": "禁用远程控制",
       "description": "禁用 Claude Code 远程控制能力，适合更严格的本机交互或受控办公环境。",
       "doc_url": "https://code.claude.com/docs/en/settings",
+      "tags": ["安全"],
       "patches": [
         {
           "target": "claude_settings",
@@ -303,6 +324,7 @@
       "title": "禁用 Skill Shell 执行",
       "description": "阻止技能里的 Bash、PowerShell、Python 等可执行代码块自动运行，适合安全边界更严格或需要手动审查技能内容的场景。",
       "doc_url": "https://code.claude.com/docs/en/settings",
+      "tags": ["安全"],
       "patches": [
         {
           "target": "claude_settings",
@@ -317,6 +339,7 @@
       "title": "禁用 claude:// 深链注册",
       "description": "禁用 claude:// 深链注册，适合不希望浏览器或其它应用唤起 Claude Code 的受控环境。",
       "doc_url": "https://code.claude.com/docs/en/settings",
+      "tags": ["安全"],
       "patches": [
         {
           "target": "claude_settings",
@@ -331,6 +354,7 @@
       "title": "关闭自动记忆",
       "description": "关闭 Claude Code 的自动记忆功能，适合不希望会话内容自动写入或更新记忆文件的环境。",
       "doc_url": "https://code.claude.com/docs/en/settings",
+      "tags": ["隐私"],
       "patches": [
         {
           "target": "claude_settings",
@@ -345,6 +369,7 @@
       "title": "禁用 @ 附件自动展开",
       "description": "禁用 @ 文件附件自动展开，适合避免误把本地文件内容带入上下文，或排查附件解析导致的卡顿。",
       "doc_url": "https://code.claude.com/docs/en/env-vars",
+      "tags": ["隐私"],
       "patches": [
         {
           "target": "claude_settings",
@@ -359,6 +384,7 @@
       "title": "禁用终端鼠标捕获",
       "description": "禁用 Claude Code 的鼠标捕获，适合终端选择、滚动或复制文本被 TUI 接管时排查。",
       "doc_url": "https://code.claude.com/docs/en/env-vars",
+      "tags": ["终端"],
       "patches": [
         {
           "target": "claude_settings",
@@ -373,6 +399,7 @@
       "title": "使用终端原生光标",
       "description": "使用终端原生光标，适合光标位置显示异常、远程终端或特殊终端模拟器兼容性排查。",
       "doc_url": "https://code.claude.com/docs/en/env-vars",
+      "tags": ["终端"],
       "patches": [
         {
           "target": "claude_settings",
@@ -387,6 +414,7 @@
       "title": "禁用虚拟滚动",
       "description": "禁用 Claude Code 的虚拟滚动，适合某些终端里滚动、历史缓冲或内容定位显示异常时排查。",
       "doc_url": "https://code.claude.com/docs/en/env-vars",
+      "tags": ["终端"],
       "patches": [
         {
           "target": "claude_settings",
@@ -401,6 +429,7 @@
       "title": "禁用语法高亮",
       "description": "关闭代码语法高亮，适合低对比度主题、特殊终端配色或渲染性能问题排查。",
       "doc_url": "https://code.claude.com/docs/en/env-vars",
+      "tags": ["终端"],
       "patches": [
         {
           "target": "claude_settings",
@@ -415,6 +444,7 @@
       "title": "启用无障碍输出模式",
       "description": "启用面向屏幕阅读器等辅助技术的输出模式，适合无障碍使用或排查复杂 TUI 渲染问题。",
       "doc_url": "https://code.claude.com/docs/en/env-vars",
+      "tags": ["终端"],
       "patches": [
         {
           "target": "claude_settings",
@@ -429,6 +459,7 @@
       "title": "关闭遥测（隐私）",
       "description": "禁用 Claude Code 向 anthropic 发送匿名使用统计数据。",
       "doc_url": null,
+      "tags": ["隐私"],
       "patches": [
         {
           "target": "claude_settings",
@@ -443,6 +474,7 @@
       "title": "关闭错误上报（隐私）",
       "description": "禁用 Claude Code 错误上报，适合对日志、异常信息和网络外联更敏感的环境。",
       "doc_url": null,
+      "tags": ["隐私"],
       "patches": [
         {
           "target": "claude_settings",
@@ -457,6 +489,7 @@
       "title": "提交时不附加 Co-Authored-By 标记",
       "description": "Claude Code 默认在 git commit 里加 \"Co-Authored-By: Claude\" 行；这条关掉它，提交记录看起来就跟你自己写的一样。",
       "doc_url": null,
+      "tags": ["隐私"],
       "patches": [
         {
           "target": "claude_settings",

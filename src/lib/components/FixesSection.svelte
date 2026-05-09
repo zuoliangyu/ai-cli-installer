@@ -19,17 +19,28 @@
   let selectedTags = $state<Set<string>>(new Set());
 
   const pageSize = 10;
-  const recommendedFixIds = new Set([
-    "cc-006-disable-betas",
-    "cc-017-skip-webfetch-preflight",
-    "cc-005-onboarding-done",
-    "scrub-subprocess-env",
-    "disable-bypass-permissions-mode",
-  ]);
 
   type FixTag = {
     label: string;
     tone: "primary" | "info" | "warning" | "danger" | "success" | "muted";
+  };
+
+  const TAG_TONE: Record<string, FixTag["tone"]> = {
+    "推荐": "primary", "国内网络推荐": "primary",
+    "Windows": "info", "MCP": "info", "PowerShell": "info",
+    "终端": "warning", "网络": "warning",
+    "安全": "danger",
+    "隐私": "success",
+    "搜索": "muted",
+  };
+
+  const TAG_CLASS: Record<FixTag["tone"], string> = {
+    primary: "bg-primary/15 text-primary",
+    info: "bg-blue-500/10 text-blue-600",
+    warning: "bg-warning/15 text-warning",
+    danger: "bg-destructive/10 text-destructive",
+    success: "bg-success/15 text-success",
+    muted: "bg-muted text-muted-foreground",
   };
 
   onMount(async () => {
@@ -58,25 +69,17 @@
     selected = new Set(selected);
   }
 
-  function filteredFixes(): Fix[] {
+  const filteredFixes = $derived.by(() => {
     let list = fixes;
-    if (filter === "configured") list = list.filter((fix) => fix.configured);
-    if (filter === "pending") list = list.filter((fix) => !fix.configured);
+    if (filter === "configured") list = list.filter((f) => f.configured);
+    if (filter === "pending") list = list.filter((f) => !f.configured);
     if (selectedTags.size === 0) return list;
-    return list.filter((fix) =>
-      fixTags(fix, false).some((tag) => selectedTags.has(tag.label))
-    );
-  }
-
-  function pageCount(): number {
-    return Math.max(1, Math.ceil(filteredFixes().length / pageSize));
-  }
-
-  function pagedFixes(): Fix[] {
-    const list = filteredFixes();
-    const start = (currentPage - 1) * pageSize;
-    return list.slice(start, start + pageSize);
-  }
+    return list.filter((f) => fixTags(f, false).some((t) => selectedTags.has(t.label)));
+  });
+  const pageCount = $derived(Math.max(1, Math.ceil(filteredFixes.length / pageSize)));
+  const pagedFixes = $derived(
+    filteredFixes.slice((currentPage - 1) * pageSize, currentPage * pageSize)
+  );
 
   function setFilter(next: typeof filter) {
     filter = next;
@@ -104,16 +107,14 @@
   }
 
   function clampPage() {
-    currentPage = Math.min(currentPage, pageCount());
+    currentPage = Math.min(currentPage, pageCount);
   }
 
   function scrollListTop() {
     listViewport?.scrollTo({ top: 0, behavior: "smooth" });
   }
 
-  function configuredCount(): number {
-    return fixes.filter((fix) => fix.configured).length;
-  }
+  const configuredCount = $derived(fixes.filter((f) => f.configured).length);
 
   function targetLabel(target: string): string {
     if (target === "claude_settings") return "~/.claude/settings.json";
@@ -129,43 +130,10 @@
   }
 
   function fixTags(fix: Fix, limit = true): FixTag[] {
-    const tags: FixTag[] = [];
-    if (fix.id === "cc-017-skip-webfetch-preflight") {
-      tags.push({ label: "国内网络推荐", tone: "primary" });
-    } else if (recommendedFixIds.has(fix.id)) {
-      tags.push({ label: "推荐", tone: "primary" });
-    }
-
-    if (fix.code === "CC-WIN") tags.push({ label: "Windows", tone: "info" });
-    if (fix.code === "CC-MCP") tags.push({ label: "MCP", tone: "info" });
-    if (fix.code === "CC-TUI") tags.push({ label: "终端", tone: "warning" });
-
-    if (
-      fix.code === "CC-SAFE" ||
-      fix.id === "disable-nonessential-traffic" ||
-      fix.id === "disable-nonstreaming-fallback"
-    ) {
-      tags.push({ label: "安全", tone: "danger" });
-    } else if (
-      fix.code === "CC-PRIVACY" ||
-      fix.id === "disable-telemetry" ||
-      fix.id === "include-coauthor-off"
-    ) {
-      tags.push({ label: "隐私", tone: "success" });
-    }
-
-    if (fix.code === "CC-NET") tags.push({ label: "网络", tone: "warning" });
-    if (
-      fix.id === "respect-gitignore-in-glob" ||
-      fix.id === "native-file-search" ||
-      fix.id === "use-system-ripgrep"
-    ) {
-      tags.push({ label: "搜索", tone: "muted" });
-    }
-    if (fix.id === "enable-powershell-tool" || fix.id === "default-shell-powershell") {
-      tags.push({ label: "PowerShell", tone: "info" });
-    }
-
+    const tags = fix.tags.map((label) => ({
+      label,
+      tone: (TAG_TONE[label] ?? "muted") as FixTag["tone"],
+    }));
     return limit ? tags.slice(0, 3) : tags;
   }
 
@@ -182,13 +150,7 @@
   }
 
   function tagClass(tone: FixTag["tone"]): string {
-    const base = "text-[10px] px-1.5 py-0.5 rounded font-semibold";
-    if (tone === "primary") return `${base} recommended-tag text-primary`;
-    if (tone === "info") return `${base} bg-blue-500/10 text-blue-600`;
-    if (tone === "warning") return `${base} bg-warning/15 text-warning`;
-    if (tone === "danger") return `${base} bg-destructive/10 text-destructive`;
-    if (tone === "success") return `${base} bg-success/15 text-success`;
-    return `${base} bg-muted text-muted-foreground`;
+    return `text-[10px] px-1.5 py-0.5 rounded font-semibold ${TAG_CLASS[tone]}`;
   }
 
   async function apply() {
@@ -266,7 +228,7 @@
     <!-- Filters -->
     <div class="shrink-0 flex flex-col gap-2">
       <div class="flex flex-wrap gap-1.5">
-        {#each [{ k: "all", l: `全部 ${fixes.length}` }, { k: "configured", l: `已配置 ${configuredCount()}` }, { k: "pending", l: `未配置 ${fixes.length - configuredCount()}` }] as f}
+        {#each [{ k: "all", l: `全部 ${fixes.length}` }, { k: "configured", l: `已配置 ${configuredCount}` }, { k: "pending", l: `未配置 ${fixes.length - configuredCount}` }] as f}
           <button
             onclick={() => setFilter(f.k as typeof filter)}
             class="px-2.5 py-1 text-xs rounded-md border transition-colors {filter === f.k
@@ -321,7 +283,7 @@
     <!-- List -->
     <div bind:this={listViewport} class="min-h-0 flex-1 overflow-y-auto pr-1">
       <ul class="flex flex-col gap-2">
-        {#each pagedFixes() as fix (fix.id)}
+        {#each pagedFixes as fix (fix.id)}
           {@const tags = fixTags(fix)}
           {@const hasStatus = fix.configured || (fix.total_patches > 0 && fix.configured_patches > 0)}
           <li
@@ -411,12 +373,12 @@
       <div class="flex flex-wrap items-center justify-between gap-2">
         <div class="flex items-center gap-2 text-xs text-muted-foreground">
           <span>已选 {selected.size} / {fixes.length}</span>
-          {#if filteredFixes().length > pageSize}
-            <span>第 {currentPage} / {pageCount()} 页</span>
+          {#if filteredFixes.length > pageSize}
+            <span>第 {currentPage} / {pageCount} 页</span>
           {/if}
         </div>
         <div class="flex items-center gap-2">
-          {#if filteredFixes().length > pageSize}
+          {#if filteredFixes.length > pageSize}
             <button
               disabled={currentPage === 1}
               onclick={() => setPage(currentPage - 1)}
@@ -425,7 +387,7 @@
               上一页
             </button>
             <button
-              disabled={currentPage === pageCount()}
+              disabled={currentPage === pageCount}
               onclick={() => setPage(currentPage + 1)}
               class="px-2 py-1 text-xs rounded-md border border-border text-muted-foreground hover:bg-accent/50 hover:text-foreground disabled:opacity-50"
             >
@@ -469,21 +431,3 @@
   {/if}
 </section>
 
-<style>
-  .recommended-tag {
-    background: rgb(var(--primary) / 0.16);
-    animation: recommended-breathe 1.35s ease-in-out infinite;
-  }
-
-  @keyframes recommended-breathe {
-    0%,
-    100% {
-      background: rgb(var(--primary) / 0.12);
-      box-shadow: inset 0 0 0 1px rgb(var(--primary) / 0.1);
-    }
-    50% {
-      background: rgb(var(--primary) / 0.32);
-      box-shadow: inset 0 0 0 1px rgb(var(--primary) / 0.24);
-    }
-  }
-</style>
