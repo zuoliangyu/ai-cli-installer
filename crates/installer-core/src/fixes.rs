@@ -19,6 +19,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use std::sync::{LazyLock, Mutex};
 use std::time::Duration;
 
 use crate::error::{AppError, Result};
@@ -33,6 +34,8 @@ const FIXES_REMOTE_URLS: &[&str] = &[
     "https://fastgit.cc/https://raw.githubusercontent.com/zuoliangyu/ai-cli-installer/main/crates/installer-core/fixes.json",
     "https://github.chenc.dev/https://raw.githubusercontent.com/zuoliangyu/ai-cli-installer/main/crates/installer-core/fixes.json",
 ];
+
+static FIXES_CACHE: LazyLock<Mutex<Option<Vec<Fix>>>> = LazyLock::new(|| Mutex::new(None));
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(rename_all = "snake_case")]
@@ -91,6 +94,11 @@ struct FixesFile {
 
 /// Try remote URLs in order, fall back to the build-time embedded JSON.
 pub async fn list_fixes(client: &reqwest::Client) -> Result<Vec<Fix>> {
+    if let Some(mut fixes) = cached_fixes() {
+        annotate_config_status(&mut fixes);
+        return Ok(fixes);
+    }
+
     let embedded = parse_embedded_file()?;
     for url in FIXES_REMOTE_URLS {
         match fetch_remote(client, url).await {
@@ -113,6 +121,7 @@ pub async fn list_fixes(client: &reqwest::Client) -> Result<Vec<Fix>> {
                     url,
                     fixes.len()
                 );
+                cache_fixes(&fixes);
                 return Ok(fixes);
             }
             Err(e) => tracing::warn!("fixes fetch failed from {}: {}", url, e),
@@ -121,6 +130,7 @@ pub async fn list_fixes(client: &reqwest::Client) -> Result<Vec<Fix>> {
     tracing::info!("fixes: all remote sources failed, using embedded fallback");
     let mut fixes = embedded.fixes;
     annotate_config_status(&mut fixes);
+    cache_fixes(&fixes);
     Ok(fixes)
 }
 
@@ -149,6 +159,16 @@ fn parse_embedded_file() -> Result<FixesFile> {
 /// disk so apply_selected sees the fresh definitions too.
 fn list_fixes_embedded() -> Result<Vec<Fix>> {
     Ok(parse_embedded_file()?.fixes)
+}
+
+fn cached_fixes() -> Option<Vec<Fix>> {
+    FIXES_CACHE.lock().ok().and_then(|guard| guard.clone())
+}
+
+fn cache_fixes(fixes: &[Fix]) {
+    if let Ok(mut guard) = FIXES_CACHE.lock() {
+        *guard = Some(fixes.to_vec());
+    }
 }
 
 fn remote_is_fresh_enough(remote: &FixesFile, embedded: &FixesFile) -> bool {
@@ -410,7 +430,10 @@ fn get_dotted_mut<'a>(
 
 #[cfg(test)]
 mod tests {
-    use super::{get_dotted, remote_is_fresh_enough, remove_dotted, set_dotted, FixesFile};
+    use super::{
+        cache_fixes, cached_fixes, get_dotted, remote_is_fresh_enough, remove_dotted, set_dotted,
+        Fix, FixesFile,
+    };
     use serde_json::json;
 
     fn fixes_file(updated_at: Option<&str>) -> FixesFile {
@@ -466,5 +489,24 @@ mod tests {
         let remote = fixes_file(Some("2026-05-07"));
         let embedded = fixes_file(Some("2026-05-10"));
         assert!(!remote_is_fresh_enough(&remote, &embedded));
+    }
+
+    #[test]
+    fn caches_fix_definitions() {
+        cache_fixes(&[Fix {
+            id: "sample".into(),
+            code: "CC-TEST".into(),
+            title: "Sample".into(),
+            description: "Sample fix".into(),
+            doc_url: None,
+            patches: vec![],
+            configured: true,
+            configured_patches: 1,
+            total_patches: 1,
+        }]);
+
+        let cached = cached_fixes().expect("fixes should be cached");
+        assert_eq!(cached.len(), 1);
+        assert_eq!(cached[0].id, "sample");
     }
 }

@@ -65,11 +65,12 @@
           </section>
         {:else if $page === "presets"}
           <PresetSection />
-        {:else if $page === "fixes"}
-          <FixesSection />
         {:else if $page === "about"}
           <About />
         {/if}
+        <div class="{$page === 'fixes' ? 'contents' : 'hidden'}">
+          <FixesSection />
+        </div>
       </div>
     {/if}
   </main>
