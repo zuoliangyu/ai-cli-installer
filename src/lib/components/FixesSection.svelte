@@ -102,7 +102,7 @@
   }
 
   function setPage(next: number) {
-    currentPage = Math.min(Math.max(next, 1), pageCount());
+    currentPage = Math.min(Math.max(next, 1), pageCount);
     scrollListTop();
   }
 
@@ -137,7 +137,7 @@
     return limit ? tags.slice(0, 3) : tags;
   }
 
-  function tagOptions(): (FixTag & { count: number })[] {
+  const tagOptions = $derived.by(() => {
     const options = new Map<string, FixTag & { count: number }>();
     for (const fix of fixes) {
       for (const tag of fixTags(fix, false)) {
@@ -147,7 +147,7 @@
       }
     }
     return [...options.values()];
-  }
+  });
 
   function tagClass(tone: FixTag["tone"]): string {
     return `text-[10px] px-1.5 py-0.5 rounded font-semibold ${TAG_CLASS[tone]}`;
@@ -259,7 +259,7 @@
       {#if tagPanelOpen}
         <div class="rounded-md border border-border bg-muted/30 p-2">
           <div class="flex flex-wrap gap-1.5">
-            {#each tagOptions() as tag}
+            {#each tagOptions as tag}
               <label
                 class="inline-flex items-center gap-1.5 px-2 py-1 rounded-md border text-xs cursor-pointer transition-colors {selectedTags.has(tag.label)
                   ? 'border-primary bg-primary/10 text-primary'

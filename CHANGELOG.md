@@ -4,6 +4,40 @@
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-05-10
+
+### 「故障排查 / 配置补丁」扩充到 33 条 + 标签筛选 + 远程缓存
+
+修复列表从 5 条扩到 33 条，覆盖 CC-006 / CC-005 / CC-017 / CC-WIN / CC-SHELL / CC-SAFE / CC-NET / CC-MCP / CC-TUI / CC-PRIVACY / CC-COMMON 各类。每条仍是对 `~/.claude/settings.json` 或 `~/.claude.json` 的 dotted-path 合并写入，保留所有其它字段。
+
+### 新增
+
+- **远程优先 + 编译时兜底**：app 启动时按 `raw.githubusercontent.com → gh-proxy / fastgit / github.chenc.dev` 顺序拉 `fixes.json`（每条 5s 超时），远程 `updated_at ≥ embedded` 才采用。新加修复改 JSON 推 main 即可对联网用户生效，不需要发版
+- **进程内缓存**（`LazyLock<Mutex<Option<Vec<Fix>>>>`）：跨 tab 切换不再重复网络请求；缓存命中时仍重新读盘标注配置状态
+- **多标签筛选面板**：每条 fix 在 JSON 里带 `tags` 字段（前端无硬编码分类），用户可勾选多个标签做 OR 组合，叠加三档状态过滤（全部 / 已配置 / 未配置）
+- **分页**：每页 10 条，标签或状态变化时回到第 1 页
+
+### 改动
+
+- `FixesSection.svelte` 中 `filteredFixes` / `pageCount` / `pagedFixes` / `configuredCount` 由命令式函数改为 `$derived` 响应式派生值
+- 「推荐标签」呼吸动画移除
+- `App.svelte` 让 `FixesSection` 常驻挂载（`display: contents/hidden` 切换可见性），保证缓存跨页切换有效
+
+### 修复（v0.2.4 内补丁）
+
+- 分页按钮一点就崩：`setPage` 里把 `pageCount` 当函数调用了（`pageCount()`），但同次重构已经把它改成 `$derived` 值，应去掉括号
+- `tagOptions` 在模板里被以函数调用、每次响应式更新都重算 Map，改成 `$derived.by(...)` 与同文件其他派生值保持一致
+
+### 内部
+
+- 新增 `crates/installer-core/src/fixes.rs` 中 `cached_fixes` / `cache_fixes` / `remote_is_fresh_enough` 等辅助
+- 新增 4 个单元测试：远程更新逻辑、缓存读写
+
+### 贡献者
+
+- [@LS-plan](https://github.com/LS-plan) (ShuyuS) — feature PR [#2](https://github.com/zuoliangyu/ai-cli-installer/pull/2)：33 条修复扩充、远程缓存、标签筛选面板、分页、`$derived` 重构
+- [@zuoliangyu](https://github.com/zuoliangyu) — 代码审查 + 合并后修正（`pageCount()` 调用、`tagOptions` 改为 `$derived`）
+
 ## [0.2.3] - 2026-05-08
 
 ### 新增：手动检查更新 + 启动自动检查
