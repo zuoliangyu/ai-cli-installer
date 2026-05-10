@@ -64,6 +64,7 @@ export interface Fix {
   description: string;
   doc_url: string | null;
   patches: FixPatch[];
+  tags: string[];
   configured: boolean;
   configured_patches: number;
   total_patches: number;
