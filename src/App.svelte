@@ -9,7 +9,7 @@
   import UpdateToast from "./lib/components/UpdateToast.svelte";
   import { tools } from "./lib/stores";
   import { initApp } from "./lib/api";
-  import { page } from "./lib/page";
+  import { page, type Page } from "./lib/page";
   import { runStartupCheck } from "./lib/updateStore";
   import "./lib/theme";
 
@@ -27,7 +27,7 @@
     runStartupCheck().catch(() => {});
   });
 
-  const titles: Record<string, string> = {
+  const titles: Record<Page, string> = {
     tools: "CLI 工具",
     presets: "中转预设",
     fixes: "配置修复",
