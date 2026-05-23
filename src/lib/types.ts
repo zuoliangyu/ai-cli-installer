@@ -27,6 +27,9 @@ export interface ToolDescriptor {
   latest_version: string | null;
   stable_version: string | null;
   stable_falls_back_to_latest: boolean;
+  /** version came from the on-disk cache, not a fresh mirror response */
+  latest_version_stale: boolean;
+  stable_version_stale: boolean;
   installations: ToolInstallation[];
   install_path: string | null;
   supports_npm: boolean;

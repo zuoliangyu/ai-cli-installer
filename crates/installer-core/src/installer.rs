@@ -24,13 +24,18 @@ pub async fn make_executable(_path: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Run `<binary> install [target]` and capture output. Mirrors official install.sh behavior.
+/// Run `<binary> install [target] --force` and capture output. Mirrors official install.sh behavior.
+///
+/// `--force` bypasses the bootstrap's own version check against `downloads.claude.ai`,
+/// which is unreachable from networks where the official endpoint is blocked. The binary
+/// we just downloaded from a mirror is already the right version, so the check is redundant.
 pub async fn run_self_install(binary: &Path, target: Option<&str>) -> Result<String> {
     let mut cmd = Command::new(binary);
     cmd.arg("install");
     if let Some(t) = target {
         cmd.arg(t);
     }
+    cmd.arg("--force");
     crate::proc::silence_windows(&mut cmd);
     let output = cmd
         .output()

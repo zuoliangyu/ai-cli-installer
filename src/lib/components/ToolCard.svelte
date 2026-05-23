@@ -71,6 +71,21 @@
     }
   }
 
+  /** 用户点了红色「获取版本失败 · 点此重试」按钮时调用。复用 busy 锁
+   * 让其它按钮跟着禁用，避免重试期间用户又去点别的。 */
+  async function handleRetry() {
+    busy = true;
+    error = null;
+    message = null;
+    try {
+      await refreshTools();
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+    } finally {
+      busy = false;
+    }
+  }
+
   async function handleAddPath() {
     pathBusy = true;
     error = null;
@@ -103,13 +118,26 @@
 
   function channelLabel(channel: "latest" | "stable", version: string | null): string {
     const action = tool.installed_version ? "更新到" : "安装";
+    const stale =
+      channel === "latest" ? tool.latest_version_stale : tool.stable_version_stale;
     if (channel === "stable" && tool.stable_falls_back_to_latest) {
-      return version
+      const base = version
         ? `${action} stable (跟随 latest v${version})`
         : `${action} stable (跟随 latest)`;
+      return stale ? `${base} · 缓存` : base;
     }
-    return version ? `${action} ${channel} v${version}` : `${action} ${channel}`;
+    if (!version) return `${action} ${channel}`;
+    return stale ? `${action} ${channel} v${version} · 缓存` : `${action} ${channel} v${version}`;
   }
+
+  function channelFailed(channel: "latest" | "stable"): boolean {
+    return channel === "latest"
+      ? tool.latest_version === null
+      : tool.stable_version === null;
+  }
+
+  const RETRY_LABEL = "获取版本失败 · 点此重试";
+  const STALE_HINT = "未能访问镜像，使用缓存版本号（可能已过期）";
 
   function sourceLabel(source: InstallationSource): string {
     if (source === "native") return "Native";
@@ -192,20 +220,44 @@
       {/if}
     </div>
     <div class="flex flex-col gap-1.5 shrink-0">
-      <button
-        onclick={() => handleInstall("latest")}
-        disabled={busy}
-        class="px-3 py-1.5 text-xs whitespace-nowrap rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
-      >
-        {channelLabel("latest", tool.latest_version)}
-      </button>
-      <button
-        onclick={() => handleInstall("stable")}
-        disabled={busy}
-        class="px-3 py-1.5 text-xs whitespace-nowrap rounded-md border border-border bg-muted/50 text-foreground hover:bg-accent transition-colors disabled:opacity-50"
-      >
-        {channelLabel("stable", tool.stable_version)}
-      </button>
+      {#if channelFailed("latest")}
+        <button
+          onclick={handleRetry}
+          disabled={busy}
+          title="所有镜像 10 秒内都没拿到版本号，本地也没有缓存。点此重试拉取。"
+          class="px-3 py-1.5 text-xs whitespace-nowrap rounded-md bg-destructive text-destructive-foreground hover:bg-destructive/90 transition-colors disabled:opacity-50"
+        >
+          {RETRY_LABEL}
+        </button>
+      {:else}
+        <button
+          onclick={() => handleInstall("latest")}
+          disabled={busy}
+          title={tool.latest_version_stale ? STALE_HINT : undefined}
+          class="px-3 py-1.5 text-xs whitespace-nowrap rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
+        >
+          {channelLabel("latest", tool.latest_version)}
+        </button>
+      {/if}
+      {#if channelFailed("stable")}
+        <button
+          onclick={handleRetry}
+          disabled={busy}
+          title="所有镜像 10 秒内都没拿到版本号，本地也没有缓存。点此重试拉取。"
+          class="px-3 py-1.5 text-xs whitespace-nowrap rounded-md bg-destructive text-destructive-foreground hover:bg-destructive/90 transition-colors disabled:opacity-50"
+        >
+          {RETRY_LABEL}
+        </button>
+      {:else}
+        <button
+          onclick={() => handleInstall("stable")}
+          disabled={busy}
+          title={tool.stable_version_stale ? STALE_HINT : undefined}
+          class="px-3 py-1.5 text-xs whitespace-nowrap rounded-md border border-border bg-muted/50 text-foreground hover:bg-accent transition-colors disabled:opacity-50"
+        >
+          {channelLabel("stable", tool.stable_version)}
+        </button>
+      {/if}
     </div>
   </div>
 

@@ -181,6 +181,8 @@ impl Tool for ClaudeCode {
             latest_version: None,
             stable_version: None,
             stable_falls_back_to_latest: false,
+            latest_version_stale: false,
+            stable_version_stale: false,
             installations: Vec::new(),
             install_path: self
                 .launcher_path()

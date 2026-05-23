@@ -26,6 +26,7 @@ pub mod progress;
 pub mod tools;
 pub mod upstream;
 pub mod verifier;
+pub mod version_cache;
 
 pub use app_state::AppState;
 pub use error::{AppError, Result};

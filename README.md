@@ -172,7 +172,7 @@ cargo tauri icon path/to/logo.png
 推 `v*` 标签触发 `release.yml`：
 
 ```sh
-git tag v0.2.4
+git tag v0.3.0
 git push --tags
 ```
 

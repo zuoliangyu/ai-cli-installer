@@ -21,6 +21,7 @@ use crate::progress::ProgressCallback;
 use crate::tools::{
     claude_code::ClaudeCode, codex::CodexCli, InstallMethod, InstallReport, Tool, ToolDescriptor,
 };
+use crate::version_cache;
 
 pub struct AppState {
     pub client: reqwest::Client,
@@ -90,18 +91,29 @@ pub async fn list_tools(state: &AppState) -> Result<Vec<ToolDescriptor>> {
         )
     );
 
-    let (cc_stable, cc_falls_back) = resolve_stable(cc_stable, &cc_latest);
-    let (cx_stable, cx_falls_back) = resolve_stable(cx_stable, &cx_latest);
+    let (cc_latest, cc_latest_stale) = cc_latest;
+    let (cc_stable_raw, cc_stable_stale_raw) = cc_stable;
+    let (cx_latest, cx_latest_stale) = cx_latest;
+    let (cx_stable_raw, cx_stable_stale_raw) = cx_stable;
+
+    let (cc_stable, cc_falls_back, cc_stable_stale) =
+        resolve_stable(cc_stable_raw, cc_stable_stale_raw, &cc_latest, cc_latest_stale);
+    let (cx_stable, cx_falls_back, cx_stable_stale) =
+        resolve_stable(cx_stable_raw, cx_stable_stale_raw, &cx_latest, cx_latest_stale);
 
     cd.installed_version = cc_installed.or_else(|| installed_from(&cc_installations));
     cd.latest_version = cc_latest;
+    cd.latest_version_stale = cc_latest_stale;
     cd.stable_version = cc_stable;
+    cd.stable_version_stale = cc_stable_stale;
     cd.stable_falls_back_to_latest = cc_falls_back;
     cd.installations = cc_installations;
 
     xd.installed_version = cx_installed.or_else(|| installed_from(&cx_installations));
     xd.latest_version = cx_latest;
+    xd.latest_version_stale = cx_latest_stale;
     xd.stable_version = cx_stable;
+    xd.stable_version_stale = cx_stable_stale;
     xd.stable_falls_back_to_latest = cx_falls_back;
     xd.installations = cx_installations;
 
@@ -269,27 +281,62 @@ fn launcher_dir_for(tool_id: &str) -> Result<PathBuf> {
     }
 }
 
-fn resolve_stable(stable: Option<String>, latest: &Option<String>) -> (Option<String>, bool) {
+/// Resolve a stable-channel version, falling back to latest when the mirror
+/// has no separate stable pointer. Returns `(version, falls_back, stale)`:
+/// - `falls_back` true → button labels with "跟随 latest" (existing behavior)
+/// - `stale` true → version came from cache (either stable cache directly, or
+///   latest cache when we fell back). UI suffixes "缓存".
+fn resolve_stable(
+    stable: Option<String>,
+    stable_stale: bool,
+    latest: &Option<String>,
+    latest_stale: bool,
+) -> (Option<String>, bool, bool) {
     match stable {
-        Some(v) => (Some(v), false),
-        None => (latest.clone(), latest.is_some()),
+        Some(v) => (Some(v), false, stable_stale),
+        None => (latest.clone(), latest.is_some(), latest_stale),
     }
 }
 
+/// Returns `(version, stale)`. `stale` is true when the version came from the
+/// on-disk fallback cache rather than a fresh mirror response; the UI uses
+/// this to label the button with a "缓存" suffix. When even the cache is
+/// empty, returns `(None, false)` and the UI shifts the button into its
+/// destructive retry state.
 async fn fetch_channel_version<T: Tool>(
     client: &reqwest::Client,
     tool: &T,
     channel: &str,
-) -> Option<String> {
+) -> (Option<String>, bool) {
     let mirrors = tool.mirror_list();
-    tokio::time::timeout(
-        Duration::from_secs(5),
+    let fresh = tokio::time::timeout(
+        Duration::from_secs(10),
         mirrors::fetch_version(client, &mirrors, channel),
     )
     .await
     .ok()
     .and_then(|result| result.ok())
-    .map(|(_, version)| version)
+    .map(|(_, version)| version);
+
+    let tool_id = tool.id();
+    match fresh {
+        Some(v) => {
+            version_cache::record(tool_id, channel, &v);
+            (Some(v), false)
+        }
+        None => match version_cache::get(tool_id, channel) {
+            Some(cached) => {
+                tracing::warn!(
+                    "version fetch failed for {}/{} — falling back to cached {}",
+                    tool_id,
+                    channel,
+                    cached
+                );
+                (Some(cached), true)
+            }
+            None => (None, false),
+        },
+    }
 }
 
 fn native_launcher_path<T: Tool>(tool: &T, command_name: &str) -> Option<PathBuf> {
@@ -302,9 +349,14 @@ fn native_launcher_path<T: Tool>(tool: &T, command_name: &str) -> Option<PathBuf
 }
 
 async fn install_channel<T: Tool>(client: &reqwest::Client, tool: &T, channel: String) -> String {
+    // Treat a cached stable version (stale=true) as "stable exists" — the
+    // actual binary fetch downstream will hit the mirror chain itself and
+    // surface AllMirrorsFailed if the network is still down. Better to honor
+    // the user's stable pick than to silently jump to latest.
     if channel != "stable"
         || fetch_channel_version(client, tool, "stable")
             .await
+            .0
             .is_some()
     {
         return channel;

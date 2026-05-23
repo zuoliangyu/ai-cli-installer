@@ -4,6 +4,37 @@
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-05-23
+
+### 版本同步失败时的兜底：本地缓存 + 显式失败状态
+
+之前镜像全挂或网络抖动时，前端按钮文案会从「更新到 latest v1.2.3」悄悄降级到「更新到 latest」——视觉差极小但语义完全不同（前者知道目标版本，后者不知道）。结果就是网络好的用户和网络差的用户看到几乎一样的界面，但点下去的实际行为天差地别。这版把两端都打通：后端落盘缓存上次成功的版本号、超时拉长；前端把「拿到」「来自缓存」「完全失败」三态在视觉上区分开。
+
+### 新增
+
+- **版本号本地缓存**（`crates/installer-core/src/version_cache.rs`）：每次 `fetch_channel_version` 成功就把 `(tool_id, channel) → version` 写入 `~/.ai-cli-installer/version-cache.json`；下次拉不到时回退到这个缓存值，并把 `stale=true` 透传到前端
+  - 原子写（`.tmp` + `rename`），失败吞掉走 `tracing::warn` —— 这是兜底缓存，不能反过来阻塞主流程
+  - `LazyLock<std::sync::Mutex<()>>` 串行化 read-modify-write，规避 `list_tools` 中四个 `tokio::join!` 并发写产生的丢更新
+- **`ToolDescriptor` 新增 `latest_version_stale` / `stable_version_stale` 两个 bool 字段**：前后端同时改，前端按这两个字段渲染「· 缓存」后缀和 tooltip 提示
+- **「获取版本失败 · 点此重试」按钮**：当连缓存都没有（`latest_version == null`）时，按钮换 `bg-destructive` 配色 + disabled 阻止误装 + onclick 调 `refreshTools()` 重新拉。复用 `busy` 状态锁让其他按钮跟着禁用
+- **stale 缓存按钮**：从缓存命中时按钮文案追加 `· 缓存`，加 `title` 提示「未能访问镜像，使用缓存版本号（可能已过期）」——仍然允许点击安装
+
+### 改动
+
+- **镜像超时 5s → 10s**（`app_state.rs::fetch_channel_version`）：弱网环境下让镜像链有更多时间走完串行尝试
+- **`<binary> install` 加 `--force` 标志**：跳过 bootstrap 自己回连 `downloads.claude.ai` 的版本校验——我们刚从镜像下载的二进制本身就是对的版本，这一步是冗余的；在国内屏蔽官方端点的网络上，原来这一步会让整个 install 失败
+- **`fetch_channel_version` 返回类型** `Option<String>` → `(Option<String>, bool)`：第二个字段标记 stale，跟既有的 `resolve_stable` 返回元组保持一致
+- **`resolve_stable` 签名扩展为 `(version, falls_back, stale)`**：stable 通道无独立指针、回退到 latest 时，stale 标记一起跟着 latest
+- **`install_channel` 接受 stale stable 作为可安装状态**：UI 上显示「stable · 缓存」的按钮点下去就真的走 stable 路径，不会偷偷换成 latest——真二进制拉取自带重试链，让它去报 `AllMirrorsFailed` 比这里悄悄改通道更诚实
+
+### 内部
+
+- `installer-core` 新增 `version_cache` 模块，3 个单元测试覆盖 JSON round-trip / 空对象解析 / 缺失字段拒绝
+- `tools/claude_code.rs` 与 `tools/codex.rs` 的 `descriptor()` 初始化两个新 stale 字段为 `false`
+- 前端 `ToolCard.svelte` 重写按钮区块为 `{#if channelFailed(channel)}` 三态分支，`channelLabel` 内部读 `tool.*_version_stale`（与既有 `tool.stable_falls_back_to_latest` 同款闭包读法）
+- 新增 `handleRetry()` 异步函数，复用 `busy` 锁与 `refreshTools()`，不引入新 state 变量
+- 新增 `build.ps1` / `dev.ps1`：PowerShell 7 的 build / dev 包装脚本，方便本机一键产 bundle 或开 tauri dev
+
 ## [0.2.4] - 2026-05-10
 
 ### 「故障排查 / 配置补丁」扩充到 33 条 + 标签筛选 + 远程缓存

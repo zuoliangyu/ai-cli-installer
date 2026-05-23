@@ -36,6 +36,13 @@ pub struct ToolDescriptor {
     /// label the stable button accordingly so the version number isn't
     /// misattributed.
     pub stable_falls_back_to_latest: bool,
+    /// True when `latest_version` came from the on-disk fallback cache rather
+    /// than a fresh mirror response. UI marks the button with a "缓存"
+    /// suffix so the user knows the number may be out of date.
+    pub latest_version_stale: bool,
+    /// Same idea as `latest_version_stale`, for the stable channel. When
+    /// `stable_falls_back_to_latest` is true, this mirrors the latest flag.
+    pub stable_version_stale: bool,
     pub installations: Vec<ToolInstallation>,
     pub install_path: Option<String>,
     /// True if this tool can be installed via npm. UI surfaces the toggle.
