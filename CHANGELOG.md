@@ -4,6 +4,37 @@
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-05-23
+
+### 开发者选项 · 日志查看器 + 镜像版本探测并发竞速
+
+两个独立改动并到一起发：一是把「能不能看到应用自己打的日志」做成开发者选项里的开关，免得遇到启动错误时只能靠用户截屏控制台；二是修了 `fetch_version` 在弱网下被单个慢镜像拖垮 10s 预算的老毛病——这次改完，前端再看到「获取版本失败」基本就是真的所有镜像都挂了，而不是只是头一个卡住。
+
+### 新增
+
+- **开发者选项**（关于页底部）：默认关闭，开启后侧边栏在「配置修复」与「关于」之间出现「查看日志」入口；开关状态写 `localStorage`，刷新保持
+- **日志查看器**（`src/lib/components/LogViewer.svelte`）：3 秒自动刷新、滚到底、清除显示、ERROR 红色 / WARN 黄色 高亮
+- **后端日志缓冲**（`src-tauri/src/log_buffer.rs`）：自定义 `tracing` Layer 把日志收到内存环形缓冲区，上限 5000 行；新增 Tauri 命令 `get_logs`
+- **Web 模式 stub**（`crates/installer-web/src/routes.rs`）：`/api/logs` 返回空数组，保证 web 构建与 API 形状一致
+
+### 改动
+
+- **镜像版本探测：串行 → 并发竞速**（`crates/installer-core/src/mirrors.rs::fetch_version`）：从「按列表顺序一个个试」改为 `FuturesUnordered` 全部并发、第一个返回非空 body 的胜出，每个 attempt 8s 超时兜底。总延迟由最快 mirror 决定，不再被慢 mirror 拖累整个 10s 预算
+  - 与既有 `probe_all`（并发 HEAD）的模型对齐——侧栏显示 7/8 在线，按钮就该有 7/8 的概率拿到版本号
+- **关于页 REPO 链接**修正到主仓库 `ai-cli-installer`（之前误指向 v0.0.6 前的归档库 `ai-cli-installer-dist`）；按钮文案随之改为「GitHub 仓库」
+
+### 内部
+
+- 前端 `devMode.ts` 新增 store，`Sidebar.svelte` 按 `$devMode` 条件渲染日志入口
+- `src/lib/page.ts` 新增 `logs` 页面类型，`App.svelte` 路由
+- `src/lib/api.ts` + `services/tauriApi.ts` + `services/webApi.ts` 新增 `getLogs` API（保持 Tauri / Web 两端形状一致的既定约束）
+- `fetch_version` 引入 `futures_util::stream::StreamExt` 与 `tokio::time::timeout`，逻辑上的「按序回退」语义被「并发竞速 + 全失败 → AllMirrorsFailed」替代
+
+### 贡献者
+
+- [@LS-plan](https://github.com/LS-plan) (ShuyuS) — feature PR [#3](https://github.com/zuoliangyu/ai-cli-installer/pull/3)：开发者选项 + 日志查看器（前后端 + Web stub）
+- [@zuoliangyu](https://github.com/zuoliangyu) — 镜像版本并发竞速、关于页 REPO 链接修正、合并 PR #3
+
 ## [0.3.0] - 2026-05-23
 
 ### 版本同步失败时的兜底：本地缓存 + 显式失败状态

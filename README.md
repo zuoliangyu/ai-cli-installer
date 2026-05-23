@@ -172,7 +172,7 @@ cargo tauri icon path/to/logo.png
 推 `v*` 标签触发 `release.yml`：
 
 ```sh
-git tag v0.3.0
+git tag v0.4.0
 git push --tags
 ```
 
@@ -216,5 +216,6 @@ cargo tauri signer generate -w ~/.tauri/myapp.key
 - [@LS-plan](https://github.com/LS-plan)（ShuyuS）
   - v0.0.12：安装诊断 + 修复项配置状态 + 启动窗口居中（PR [#1](https://github.com/zuoliangyu/ai-cli-installer/pull/1)）
   - v0.2.4：修复列表扩到 33 条 + 远程缓存 + 标签筛选 + 分页（PR [#2](https://github.com/zuoliangyu/ai-cli-installer/pull/2)）
+  - v0.4.0：开发者选项 + 日志查看器（PR [#3](https://github.com/zuoliangyu/ai-cli-installer/pull/3)）
 
 完整变更与每版贡献者列表见 [CHANGELOG.md](CHANGELOG.md)。
