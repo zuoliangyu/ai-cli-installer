@@ -1,3 +1,4 @@
+use futures_util::stream::StreamExt;
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
 
@@ -204,17 +205,48 @@ pub async fn probe_all(client: &reqwest::Client, list: &MirrorList) -> Vec<Mirro
     futures_util::future::join_all(probes).await
 }
 
-/// Try mirrors in order, returning the first one that successfully fetches the version string.
+/// Race every mirror in parallel for the version string, returning whichever
+/// responds first with a non-empty body.
+///
+/// History: we used to walk mirrors sequentially, which meant a single stalled
+/// mirror at the head of the list (typically `official` when `downloads.claude.ai`
+/// is unreachable from CN) burned the entire outer 10s budget in
+/// `fetch_channel_version` before any working mirror got a chance — visible to
+/// the user as "获取版本失败" even when the sidebar probe showed 7/8 mirrors up,
+/// because probe is parallel HEAD with its own per-mirror timeout. Parallel GETs
+/// here mirror that probe shape so the two stay consistent.
+///
+/// Each per-mirror attempt is capped at 8s. The whole race finishes when the
+/// first Ok arrives, so a hot mirror returning in ~300ms means total latency is
+/// bounded by that mirror, not by the slowest peer.
 pub async fn fetch_version<'a>(
     client: &reqwest::Client,
     list: &'a MirrorList,
     channel: &str,
 ) -> Result<(&'a Mirror, String)> {
-    for m in &list.mirrors {
-        let url = m.version_url(channel);
-        match upstream::fetch_text(client, &url).await {
-            Ok(v) if !v.is_empty() => return Ok((m, v)),
-            _ => continue,
+    let mut tasks: futures_util::stream::FuturesUnordered<_> = list
+        .mirrors
+        .iter()
+        .map(|m| {
+            let url = m.version_url(channel);
+            let client = client.clone();
+            async move {
+                let r = tokio::time::timeout(
+                    Duration::from_secs(8),
+                    upstream::fetch_text(&client, &url),
+                )
+                .await;
+                match r {
+                    Ok(Ok(v)) if !v.is_empty() => Some((m, v)),
+                    _ => None,
+                }
+            }
+        })
+        .collect();
+
+    while let Some(opt) = tasks.next().await {
+        if let Some(pair) = opt {
+            return Ok(pair);
         }
     }
     Err(AppError::AllMirrorsFailed)
