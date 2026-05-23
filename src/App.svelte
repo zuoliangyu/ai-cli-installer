@@ -4,6 +4,7 @@
   import PresetSection from "./lib/components/PresetSection.svelte";
   import FixesSection from "./lib/components/FixesSection.svelte";
   import About from "./lib/components/About.svelte";
+  import LogViewer from "./lib/components/LogViewer.svelte";
   import Sidebar from "./lib/components/Sidebar.svelte";
   import UpdateToast from "./lib/components/UpdateToast.svelte";
   import { tools } from "./lib/stores";
@@ -26,18 +27,19 @@
     runStartupCheck().catch(() => {});
   });
 
-  const titles = {
+  const titles: Record<string, string> = {
     tools: "CLI 工具",
     presets: "中转预设",
     fixes: "配置修复",
     about: "关于",
-  } as const;
+    logs: "查看日志",
+  };
 </script>
 
 <div class="flex h-screen overflow-hidden">
   <Sidebar />
 
-  <main class="flex-1 min-w-0 {$page === 'fixes' ? 'overflow-hidden' : 'overflow-y-auto'}">
+  <main class="flex-1 min-w-0 {$page === 'fixes' || $page === 'logs' ? 'overflow-hidden' : 'overflow-y-auto'}">
     {#if initError}
       <div class="m-6 px-4 py-3 rounded-md text-sm bg-destructive/10 text-destructive">
         初始化失败：{initError}
@@ -47,7 +49,7 @@
         正在加载…
       </div>
     {:else}
-      <div class="max-w-3xl mx-auto p-6 flex flex-col gap-6 {$page === 'fixes' ? 'h-full min-h-0' : ''}">
+      <div class="max-w-3xl mx-auto p-6 flex flex-col gap-6 {$page === 'fixes' || $page === 'logs' ? 'h-full min-h-0' : ''}">
         <header class="pb-3 border-b border-border shrink-0">
           <h1 class="text-lg font-semibold text-foreground">{titles[$page]}</h1>
         </header>
@@ -67,6 +69,8 @@
           <PresetSection />
         {:else if $page === "about"}
           <About />
+        {:else if $page === "logs"}
+          <LogViewer />
         {/if}
         <div class="{$page === 'fixes' ? 'contents' : 'hidden'}">
           <FixesSection />

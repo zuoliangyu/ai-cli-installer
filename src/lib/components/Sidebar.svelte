@@ -1,10 +1,11 @@
 <script lang="ts">
-  import { Wrench, Plug, Bandage, Info, Sun, Moon, Monitor, RefreshCw } from "lucide-svelte";
+  import { Wrench, Plug, Bandage, Info, Sun, Moon, Monitor, RefreshCw, ScrollText } from "lucide-svelte";
   import { page, navigate, type Page } from "../page";
   import { theme, setTheme } from "../theme";
   import { mirrorProbes } from "../stores";
   import { probeMirrors } from "../api";
   import { updateState } from "../updateStore";
+  import { devMode } from "../devMode";
 
   let probing = $state(false);
   let hasUpdate = $derived(
@@ -24,12 +25,18 @@
   let mirrorTotal = $derived($mirrorProbes.length);
 
   type NavItem = { id: Page; label: string; icon: typeof Wrench };
-  const items: NavItem[] = [
+  const baseItems: NavItem[] = [
     { id: "tools", label: "CLI 工具", icon: Wrench },
     { id: "presets", label: "中转预设", icon: Plug },
     { id: "fixes", label: "配置修复", icon: Bandage },
+  ];
+  const devItems: NavItem[] = [
+    { id: "logs", label: "查看日志", icon: ScrollText },
+  ];
+  const tailItems: NavItem[] = [
     { id: "about", label: "关于", icon: Info },
   ];
+  let items = $derived([...baseItems, ...($devMode ? devItems : []), ...tailItems]);
 </script>
 
 <aside class="w-60 h-full border-r border-border bg-card flex flex-col shrink-0">

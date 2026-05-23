@@ -110,3 +110,7 @@ export async function applyClaudePreset(
 ): Promise<void> {
   await invoke<void>("apply_claude_preset", { baseUrl, authToken });
 }
+
+export async function getLogs(): Promise<string[]> {
+  return invoke<string[]>("get_logs");
+}
