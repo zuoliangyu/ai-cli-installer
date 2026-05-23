@@ -15,6 +15,8 @@ use installer_core::progress::{DownloadProgress, ProgressCallback};
 use installer_core::tools::{InstallMethod, InstallReport, ToolDescriptor};
 use installer_core::{app_state, AppState, Result};
 
+use crate::log_buffer::LogBuffer;
+
 /// Wrap the Tauri `AppHandle` as a `ProgressCallback` that emits
 /// `download-progress` events to the front-end window.
 fn progress_for_app(app: AppHandle) -> ProgressCallback {
@@ -109,4 +111,9 @@ pub async fn get_claude_settings() -> Result<ClaudeSettingsEnv> {
 #[tauri::command]
 pub async fn apply_claude_preset(base_url: String, auth_token: String) -> Result<()> {
     app_state::apply_claude_preset(&base_url, &auth_token)
+}
+
+#[tauri::command]
+pub async fn get_logs(state: State<'_, LogBuffer>) -> Result<Vec<String>> {
+    Ok(state.lines())
 }

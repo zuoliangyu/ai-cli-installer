@@ -1,7 +1,9 @@
 <script lang="ts">
   import { open as openExternal } from "@tauri-apps/plugin-shell";
-  import { Mail, Users, ExternalLink, Heart } from "lucide-svelte";
+  import { Mail, Users, ExternalLink, Heart, Code } from "lucide-svelte";
   import UpdateIndicator from "./UpdateIndicator.svelte";
+  import { devMode, toggleDevMode } from "../devMode";
+  import { navigate } from "../page";
 
   const AUTHOR = "左岚";
   const EMAIL = "zuolan1102@qq.com";
@@ -111,5 +113,37 @@
       AI Session Viewer
       <ExternalLink class="w-3 h-3" />
     </button>
+  </div>
+
+  <!-- Developer options -->
+  <div class="flex flex-col gap-3 p-4 rounded-md border border-border bg-card">
+    <div class="flex items-center justify-between">
+      <div class="flex items-center gap-2">
+        <Code class="w-4 h-4 text-muted-foreground" />
+        <h3 class="text-sm font-semibold text-foreground">开发者选项</h3>
+      </div>
+      <button
+        onclick={toggleDevMode}
+        class="relative inline-flex h-5 w-9 items-center rounded-full transition-colors {$devMode ? 'bg-primary' : 'bg-muted-foreground/30'}"
+        role="switch"
+        aria-checked={$devMode}
+        title={$devMode ? "关闭开发者选项" : "开启开发者选项"}
+      >
+        <span
+          class="inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform {$devMode ? 'translate-x-4' : 'translate-x-0.5'}"
+        ></span>
+      </button>
+    </div>
+    <p class="text-xs text-muted-foreground leading-relaxed">
+      开启后可在侧边栏查看应用运行日志，用于排查启动错误和诊断问题。
+    </p>
+    {#if $devMode}
+      <button
+        onclick={() => navigate("logs")}
+        class="inline-flex items-center gap-1.5 text-xs text-primary hover:underline self-start"
+      >
+        打开日志查看器 →
+      </button>
+    {/if}
   </div>
 </section>

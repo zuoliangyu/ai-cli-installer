@@ -179,3 +179,8 @@ pub async fn open_path(Json(body): Json<OpenPathBody>) -> impl IntoResponse {
         Err(e) => err(e).into_response(),
     }
 }
+
+pub async fn get_logs() -> impl IntoResponse {
+    // Web mode has no in-process log buffer; return empty.
+    Json(Vec::<String>::new())
+}

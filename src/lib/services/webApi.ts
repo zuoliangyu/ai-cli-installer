@@ -146,3 +146,7 @@ export async function applyClaudePreset(
 ): Promise<void> {
   await post<void>("/api/presets/apply", { baseUrl, authToken });
 }
+
+export async function getLogs(): Promise<string[]> {
+  return get<string[]>("/api/logs");
+}

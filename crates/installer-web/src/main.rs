@@ -60,6 +60,7 @@ async fn main() {
         .route("/api/presets/current", get(routes::get_claude_settings))
         .route("/api/presets/apply", post(routes::apply_claude_preset))
         .route("/api/open-path", post(routes::open_path))
+        .route("/api/logs", get(routes::get_logs))
         .with_state(state);
 
     let ws_routes = Router::new()

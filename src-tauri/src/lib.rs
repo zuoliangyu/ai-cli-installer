@@ -1,15 +1,24 @@
 use tauri::{Manager, PhysicalPosition, PhysicalSize};
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
 
 use installer_core::app_state;
 
 mod commands;
+mod log_buffer;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
+    let log_buf = log_buffer::LogBuffer::new();
+    let buf_layer = log_buffer::BufferLayer::new(log_buf.clone());
+
+    tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "info".into()),
         )
+        .with(tracing_subscriber::fmt::layer())
+        .with(buf_layer)
         .init();
 
     tauri::Builder::default()
@@ -18,6 +27,7 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(app_state::shared())
+        .manage(log_buf)
         .setup(|app| {
             configure_main_window(app);
             Ok(())
@@ -38,6 +48,7 @@ pub fn run() {
             commands::apply_fixes,
             commands::remove_fixes,
             commands::open_path,
+            commands::get_logs,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
