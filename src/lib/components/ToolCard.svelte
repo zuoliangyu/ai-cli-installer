@@ -8,6 +8,7 @@
     addToPath,
     removeFromPath,
   } from "../api";
+  import { mirrorProbes } from "../stores";
   import type {
     ToolDescriptor,
     DownloadProgress,
@@ -24,6 +25,12 @@
   }
   let { tool }: Props = $props();
 
+  /** "auto" = race all mirrors (default). Any other value = pin to that
+   * mirror name; back-end refuses to fall back so the user's choice is
+   * honored even when it fails (the error banner offers a one-click
+   * "switch to auto and retry"). */
+  const AUTO_MIRROR = "auto";
+
   let busy = $state(false);
   let pathBusy = $state(false);
   let progress = $state<DownloadProgress | null>(null);
@@ -31,6 +38,8 @@
   let error = $state<string | null>(null);
   let pathStatus = $state<PathStatus | null>(null);
   let method = $state<InstallMethod>("native");
+  let mirror = $state<string>(AUTO_MIRROR);
+  let lastChannel = $state<"latest" | "stable">("latest");
   let unlisten: (() => void) | null = null;
 
   onMount(async () => {
@@ -53,14 +62,20 @@
   }
 
   async function handleInstall(channel: "latest" | "stable" = "latest") {
+    lastChannel = channel;
     busy = true;
     error = null;
     message = null;
     progress = null;
     try {
-      const report = await installTool(tool.id, channel, method);
-      const via = report.method === "npm" ? "npm" : "镜像";
-      message = `已通过${via}安装 ${report.version} (${report.elapsed_secs}s)`;
+      const pin = mirror === AUTO_MIRROR ? null : mirror;
+      const report = await installTool(tool.id, channel, method, pin);
+      const via = report.method === "npm" ? "npm" : pin ? `镜像 ${pin}` : "镜像";
+      let msg = `已通过${via}安装 ${report.version} (${report.elapsed_secs}s)`;
+      if (report.auto_applied_fixes && report.auto_applied_fixes.length > 0) {
+        msg += `\n顺便应用了配置修复：${report.auto_applied_fixes.join("、")}（已写入 Claude 配置，可直接 \`claude login\`；如需撤销请到「配置修复」面板）。`;
+      }
+      message = msg;
       await refreshTools();
       await refreshPathStatus();
     } catch (e) {
@@ -69,6 +84,19 @@
       busy = false;
       progress = null;
     }
+  }
+
+  /** Used by the "switch to auto and retry" button shown in the error
+   * banner when a pinned-mirror install fails. */
+  async function handleRetryAuto() {
+    mirror = AUTO_MIRROR;
+    await handleInstall(lastChannel);
+  }
+
+  function mirrorOptionLabel(name: string, latencyMs: number | null, ok: boolean, errStr: string | null): string {
+    const hint = name === "github-direct" ? " · 直连 GitHub" : "";
+    if (ok && latencyMs !== null) return `${name}${hint} · ${latencyMs}ms`;
+    return `${name}${hint} · ${errStr ?? "失败"}`;
   }
 
   /** 用户点了红色「获取版本失败 · 点此重试」按钮时调用。复用 busy 锁
@@ -298,6 +326,34 @@
     </div>
   {/if}
 
+  <!-- Mirror selector — only meaningful when native method is in play.
+       npm route falls back to npmmirror registry regardless of which
+       mirror is selected here, so disabling it avoids pretending the
+       choice has effect. -->
+  {#if method === "native"}
+    <div class="flex flex-wrap items-center gap-3 px-3 py-2 rounded-md bg-muted/40 text-xs">
+      <span class="text-muted-foreground font-medium">下载来源</span>
+      <select
+        bind:value={mirror}
+        disabled={busy}
+        class="bg-background border border-border rounded px-2 py-1 text-xs text-foreground disabled:opacity-50"
+        title="选择具体镜像。失败时不会自动切换，可用错误提示里的「改用自动模式重试」回到自动模式。"
+      >
+        <option value={AUTO_MIRROR}>自动（推荐 · 并发竞速）</option>
+        {#each $mirrorProbes as p (p.name)}
+          <option value={p.name} disabled={!p.ok}>
+            {mirrorOptionLabel(p.name, p.latency_ms, p.ok, p.error)}
+          </option>
+        {/each}
+      </select>
+      {#if mirror !== AUTO_MIRROR}
+        <span class="text-[10px] text-muted-foreground">
+          仅尝试这一个镜像；失败不会回退
+        </span>
+      {/if}
+    </div>
+  {/if}
+
   {#if progress}
     <ProgressBar
       downloaded={progress.downloaded}
@@ -462,11 +518,25 @@
   {/if}
 
   {#if message}
-    <div class="px-3 py-2 rounded-md text-xs bg-success/10 text-success">{message}</div>
+    <div class="px-3 py-2 rounded-md text-xs bg-success/10 text-success whitespace-pre-line">{message}</div>
   {/if}
   {#if error}
-    <div class="px-3 py-2 rounded-md text-xs font-mono bg-destructive/10 text-destructive whitespace-pre-wrap break-words">
-      {error}
+    <div class="flex flex-col gap-1.5 px-3 py-2 rounded-md text-xs bg-destructive/10 text-destructive">
+      <div class="font-mono whitespace-pre-wrap break-words">{error}</div>
+      {#if mirror !== AUTO_MIRROR}
+        <div class="flex items-center gap-2">
+          <span class="text-[11px] text-muted-foreground">
+            指定镜像 <code class="font-mono">{mirror}</code> 失败。
+          </span>
+          <button
+            onclick={handleRetryAuto}
+            disabled={busy}
+            class="px-2 py-0.5 text-[11px] rounded-md bg-destructive text-destructive-foreground hover:bg-destructive/90 transition-colors disabled:opacity-50"
+          >
+            改用自动模式重试
+          </button>
+        </div>
+      {/if}
     </div>
   {/if}
 </article>

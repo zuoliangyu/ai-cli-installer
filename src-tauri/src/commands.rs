@@ -47,9 +47,10 @@ pub async fn install_tool(
     tool_id: String,
     channel: Option<String>,
     method: Option<InstallMethod>,
+    mirror: Option<String>,
 ) -> Result<InstallReport> {
     let progress = progress_for_app(app);
-    app_state::install_tool(&state, progress, &tool_id, channel, method).await
+    app_state::install_tool(&state, progress, &tool_id, channel, method, mirror).await
 }
 
 #[tauri::command]

@@ -50,6 +50,10 @@ pub struct InstallToolBody {
     pub channel: Option<String>,
     #[serde(default)]
     pub method: Option<InstallMethod>,
+    /// Optional mirror name to pin the install to a single source (e.g.
+    /// `"github-direct"`). `None` = auto mode (race all mirrors).
+    #[serde(default)]
+    pub mirror: Option<String>,
 }
 
 pub async fn install_tool(
@@ -60,7 +64,16 @@ pub async fn install_tool(
     let progress: ProgressCallback = Arc::new(move |p: DownloadProgress| {
         let _ = tx.send(p);
     });
-    match app_state::install_tool(&state.installer, progress, &body.tool_id, body.channel, body.method).await {
+    match app_state::install_tool(
+        &state.installer,
+        progress,
+        &body.tool_id,
+        body.channel,
+        body.method,
+        body.mirror,
+    )
+    .await
+    {
         Ok(v) => Json(v).into_response(),
         Err(e) => err(e).into_response(),
     }

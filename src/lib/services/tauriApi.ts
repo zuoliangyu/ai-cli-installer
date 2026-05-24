@@ -47,9 +47,10 @@ export async function probeMirrors(): Promise<MirrorProbe[]> {
 export async function installTool(
   toolId: string,
   channel: Channel = "latest",
-  method: InstallMethod = "native"
+  method: InstallMethod = "native",
+  mirror: string | null = null
 ): Promise<InstallReport> {
-  return invoke<InstallReport>("install_tool", { toolId, channel, method });
+  return invoke<InstallReport>("install_tool", { toolId, channel, method, mirror });
 }
 
 export async function detectNode(): Promise<NodeInfo> {

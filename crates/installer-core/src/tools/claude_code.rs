@@ -3,6 +3,7 @@ use std::time::Instant;
 
 use crate::downloader;
 use crate::error::{AppError, Result};
+use crate::fixes;
 use crate::installer;
 use crate::mirrors::{self, MirrorList};
 use crate::npm_installer;
@@ -10,6 +11,17 @@ use crate::platform;
 use crate::progress::ProgressCallback;
 use crate::tools::{InstallMethod, InstallReport, Tool, ToolDescriptor, ToolId};
 use crate::verifier;
+
+/// Fix IDs that get auto-applied right after a successful Claude Code
+/// install. cc-005 writes `hasCompletedOnboarding: true` into
+/// `~/.claude.json`, which lets users `claude login` without being
+/// blocked by Claude Code's first-launch reachability check against
+/// `api.anthropic.com` — the check ignores configured base_url
+/// overrides, so CN / proxy users are otherwise stuck before login.
+///
+/// Keep this list small and clearly safe — anything more invasive
+/// should remain user-driven via the 「配置修复」 panel.
+const AUTO_APPLY_ON_INSTALL: &[&str] = &["cc-005-onboarding-done"];
 
 pub struct ClaudeCode;
 
@@ -95,12 +107,15 @@ impl ClaudeCode {
             .and_then(|p| p.to_str().map(String::from))
             .unwrap_or_default();
 
+        let auto_applied_fixes = auto_apply_install_fixes(&client).await;
+
         Ok(InstallReport {
             tool_id: Self::ID.to_string(),
             version,
             install_path,
             elapsed_secs: started.elapsed().as_secs(),
             method: InstallMethod::Native,
+            auto_applied_fixes,
         })
     }
 
@@ -143,13 +158,42 @@ impl ClaudeCode {
             .unwrap_or_else(|| version.clone());
         let install_path = npm_installer::npm_global_bin().await.unwrap_or_default();
 
+        let auto_applied_fixes = auto_apply_install_fixes(&client).await;
+
         Ok(InstallReport {
             tool_id: Self::ID.to_string(),
             version: installed_version,
             install_path,
             elapsed_secs: started.elapsed().as_secs(),
             method: InstallMethod::Npm,
+            auto_applied_fixes,
         })
+    }
+}
+
+/// Apply the small set of "open the box" fixes from `fixes.json`
+/// right after install. Failures are logged but never escalated —
+/// the install itself succeeded, so the user shouldn't see an error
+/// just because we couldn't touch the settings file.
+async fn auto_apply_install_fixes(client: &reqwest::Client) -> Vec<String> {
+    let ids: Vec<String> = AUTO_APPLY_ON_INSTALL.iter().map(|s| s.to_string()).collect();
+    match fixes::apply_selected(client, &ids).await {
+        Ok(report) if report.applied_count > 0 => {
+            tracing::info!(
+                "auto-applied {} fix(es) post-install: {:?}",
+                report.applied_count,
+                ids
+            );
+            ids
+        }
+        Ok(_) => {
+            tracing::info!("auto-apply: no matching fix definitions found");
+            Vec::new()
+        }
+        Err(e) => {
+            tracing::warn!("auto-apply install fixes failed: {} (install still succeeded)", e);
+            Vec::new()
+        }
     }
 }
 

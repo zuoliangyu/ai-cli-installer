@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
+use crate::downloader;
 use crate::error::{AppError, Result};
 use crate::mirrors::{Mirror, MirrorList};
 use crate::proc::shell_command;
@@ -154,6 +155,12 @@ impl NpmManifestEntry {
 }
 
 /// Try mirrors in order to download `npm-manifest.json` of a given version.
+///
+/// Sequential walk with per-mirror 8s "headers received" upper bound (via
+/// `downloader::send_with_timeout`). A dead mirror at the head of the list
+/// (typically `official`, which is filtered out here, but also any GH proxy
+/// that recently went down) used to drag this into reqwest's 60s global
+/// timeout. Now it falls through in 8s.
 async fn fetch_npm_manifest(
     client: &reqwest::Client,
     mirrors: &MirrorList,
@@ -164,17 +171,17 @@ async fn fetch_npm_manifest(
             Mirror::GhRelease { .. } => m.asset_url(version, "npm-manifest.json"),
             Mirror::Upstream { .. } => continue,
         };
-        match client.get(&url).send().await {
-            Ok(resp) if resp.status().is_success() => match resp.bytes().await {
+        match downloader::send_with_timeout(client, &url).await {
+            Ok(resp) => match resp.bytes().await {
                 Ok(bytes) => {
                     if let Ok(manifest) = serde_json::from_slice::<NpmManifest>(&bytes) {
                         tracing::info!("npm-manifest.json from {}", m.name());
                         return Ok(manifest);
                     }
+                    tracing::warn!("npm-manifest {} returned unparseable JSON", m.name());
                 }
                 Err(e) => tracing::warn!("npm-manifest read failed via {}: {}", m.name(), e),
             },
-            Ok(r) => tracing::warn!("npm-manifest {} returned {}", m.name(), r.status()),
             Err(e) => tracing::warn!("npm-manifest fetch via {}: {}", m.name(), e),
         }
     }
@@ -182,6 +189,9 @@ async fn fetch_npm_manifest(
 }
 
 /// Download an asset via the mirror chain (first success wins) and verify SHA256.
+///
+/// Same per-mirror timeout treatment as `fetch_npm_manifest` — see that
+/// function's docstring.
 async fn download_asset(
     client: &reqwest::Client,
     mirrors: &MirrorList,
@@ -199,8 +209,8 @@ async fn download_asset(
             Mirror::Upstream { .. } => continue,
         };
         tracing::info!("download {} via {}: {}", asset, m.name(), url);
-        match client.get(&url).send().await {
-            Ok(resp) if resp.status().is_success() => match resp.bytes().await {
+        match downloader::send_with_timeout(client, &url).await {
+            Ok(resp) => match resp.bytes().await {
                 Ok(bytes) => {
                     if let Err(e) = tokio::fs::write(dest, &bytes).await {
                         tracing::warn!("write {} failed: {}", dest.display(), e);
@@ -214,7 +224,6 @@ async fn download_asset(
                 }
                 Err(e) => tracing::warn!("read body {} via {}: {}", asset, m.name(), e),
             },
-            Ok(r) => tracing::warn!("{} via {}: {}", asset, m.name(), r.status()),
             Err(e) => tracing::warn!("fetch {} via {}: {}", asset, m.name(), e),
         }
     }

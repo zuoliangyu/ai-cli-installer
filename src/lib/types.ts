@@ -43,6 +43,10 @@ export interface InstallReport {
   install_path: string;
   elapsed_secs: number;
   method: InstallMethod;
+  /** Fix IDs auto-applied as part of this install (e.g.
+   * `"cc-005-onboarding-done"` for Claude Code). UI surfaces these as a
+   * follow-up note so users know we touched their settings file. */
+  auto_applied_fixes?: string[];
 }
 
 export interface NodeInfo {

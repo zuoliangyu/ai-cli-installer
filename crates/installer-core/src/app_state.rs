@@ -146,20 +146,21 @@ pub async fn install_tool(
     tool_id: &str,
     channel: Option<String>,
     method: Option<InstallMethod>,
+    mirror: Option<String>,
 ) -> Result<InstallReport> {
     let requested_channel = channel.unwrap_or_else(|| "latest".to_string());
     let method = method.unwrap_or_default();
     let client = state.client.clone();
     match tool_id {
         ClaudeCode::ID => {
-            let mirrors = ClaudeCode.mirror_list();
+            let mirrors = filter_mirrors(ClaudeCode.mirror_list(), mirror.as_deref())?;
             let channel = install_channel(&client, &ClaudeCode, requested_channel).await;
             ClaudeCode
                 .install(method, progress, client, mirrors, channel)
                 .await
         }
         CodexCli::ID => {
-            let mirrors = CodexCli.mirror_list();
+            let mirrors = filter_mirrors(CodexCli.mirror_list(), mirror.as_deref())?;
             let channel = install_channel(&client, &CodexCli, requested_channel).await;
             CodexCli
                 .install(method, progress, client, mirrors, channel)
@@ -167,6 +168,25 @@ pub async fn install_tool(
         }
         other => Err(AppError::Other(format!("unknown tool: {}", other))),
     }
+}
+
+/// If the caller pinned a specific mirror by name, narrow the list to that
+/// one entry. Empty after filtering = the name didn't match anything →
+/// surface an actionable error instead of silently falling back to "auto"
+/// (which would let the install proceed with the full list, masking the
+/// user's explicit choice). `None` means "auto mode" — full list.
+fn filter_mirrors(mut list: MirrorList, name: Option<&str>) -> Result<MirrorList> {
+    let Some(name) = name else {
+        return Ok(list);
+    };
+    list.mirrors.retain(|m| m.name() == name);
+    if list.mirrors.is_empty() {
+        return Err(AppError::Other(format!(
+            "未知镜像: `{}`。请改回「自动」或换一个有效镜像。",
+            name
+        )));
+    }
+    Ok(list)
 }
 
 pub async fn detect_node() -> Result<NodeInfo> {
@@ -309,14 +329,14 @@ async fn fetch_channel_version<T: Tool>(
     channel: &str,
 ) -> (Option<String>, bool) {
     let mirrors = tool.mirror_list();
-    let fresh = tokio::time::timeout(
-        Duration::from_secs(10),
-        mirrors::fetch_version(client, &mirrors, channel),
-    )
-    .await
-    .ok()
-    .and_then(|result| result.ok())
-    .map(|(_, version)| version);
+    // fetch_version itself has a PER_MIRROR_TIMEOUT (8s) ceiling on each
+    // racer, so the whole call bottoms out at ~8s worst-case. No need for
+    // an outer wrapper timeout (pre-v0.5 we had Duration::from_secs(10)
+    // here as a guard against the old sequential-loop fetch_version).
+    let fresh = mirrors::fetch_version(client, &mirrors, channel)
+        .await
+        .ok()
+        .map(|(_, version)| version);
 
     let tool_id = tool.id();
     match fresh {

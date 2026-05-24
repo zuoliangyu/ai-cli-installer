@@ -4,7 +4,7 @@
 
 ## 架构
 
-v0.1.0 起拆为 **Cargo workspace（3 crate）+ 双前端 API 层**，桌面端和 Web 端共享同一份核心逻辑。
+**Cargo workspace（3 crate）+ 双前端 API 层**，桌面端和 Web 端共享同一份核心逻辑。
 
 ```
 官方 downloads.claude.ai
@@ -33,8 +33,6 @@ src-tauri        installer-web
 │        └─ services/webApi.ts              │
 └──────────────────────────────────────────┘
 ```
-
-应用源码与发版产物都在本仓库（v0.0.7+ 起改为单仓库公开模式；v0.0.1~v0.0.6 历史归档在 [`ai-cli-installer-dist`](https://github.com/zuoliangyu/ai-cli-installer-dist)）。
 
 ## 目录
 
@@ -158,50 +156,6 @@ npm run check            # svelte-check
 cargo check --workspace  # 三 crate 全检查
 cargo clippy --workspace -- -D warnings
 ```
-
-## 图标
-
-`src-tauri/icons/` 当前是占位，构建会失败。准备一张 1024×1024 的 PNG 后跑：
-
-```sh
-cargo tauri icon path/to/logo.png
-```
-
-## 发版（CI）
-
-推 `v*` 标签触发 `release.yml`：
-
-```sh
-git tag v0.4.0
-git push --tags
-```
-
-CI 流程：
-1. `prepare`: 在本仓库创建 draft release（如果不存在），从 CHANGELOG 抽对应版本段落作为 release notes
-2. `build`: 三平台并行构建（Linux x64 / Windows x64 / macOS arm64），上传 bundle 到 release
-3. `generate-latest`: 下载各平台 `.sig`，用 jq 拼出 `latest.json` 上传
-4. `publish`: 取消 draft 标志、设为 latest
-
-需要的 GitHub Secrets：
-
-| Secret | 用途 |
-|--|--|
-| `TAURI_SIGNING_PRIVATE_KEY` | Tauri updater 签名私钥（base64） |
-| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | 私钥密码（生成时设置的） |
-
-生成 updater 签名密钥：
-
-```sh
-cargo tauri signer generate -w ~/.tauri/myapp.key
-```
-
-公钥写入 `src-tauri/tauri.conf.json` 的 `plugins.updater.pubkey`，私钥内容（含 BEGIN/END 包裹的整段）作为 secret。
-
-## 镜像列表
-
-应用启动时优先从 `claude-code-mirror` / `codex-mirror` 仓库的 `mirrors.json` 拉取镜像列表，拉不到时回退到 `installer-core/src/mirrors.rs` 内置兜底。
-
-修改镜像策略不需要发版，编辑对应 mirror 仓库的 `mirrors.json` 推 main 即可生效。
 
 ## 代码风格
 

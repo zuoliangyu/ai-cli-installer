@@ -5,6 +5,15 @@ use std::time::{Duration, Instant};
 use crate::error::{AppError, Result};
 use crate::upstream::{self, Manifest};
 
+/// Single per-mirror upper bound. Reused by every step that races mirrors:
+/// `fetch_version`, `fetch_manifest`, and `downloader::send_with_timeout`
+/// (the "got response headers" guard around binary downloads).
+///
+/// 8s is long enough for a slow-but-alive mirror over a flaky link, short
+/// enough that a dead mirror (typically `official` from CN) doesn't drag
+/// the whole install into reqwest's 60s global timeout.
+pub const PER_MIRROR_TIMEOUT: Duration = Duration::from_secs(8);
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Mirror {
@@ -230,39 +239,80 @@ pub async fn fetch_version<'a>(
         .map(|m| {
             let url = m.version_url(channel);
             let client = client.clone();
+            let mirror_name = m.name().to_string();
             async move {
-                let r = tokio::time::timeout(
-                    Duration::from_secs(8),
-                    upstream::fetch_text(&client, &url),
-                )
-                .await;
+                let r =
+                    tokio::time::timeout(PER_MIRROR_TIMEOUT, upstream::fetch_text(&client, &url))
+                        .await;
                 match r {
-                    Ok(Ok(v)) if !v.is_empty() => Some((m, v)),
-                    _ => None,
+                    Ok(Ok(v)) if !v.is_empty() => Ok((m, v)),
+                    Ok(Ok(_)) => Err((mirror_name, "empty body".to_string())),
+                    Ok(Err(e)) => Err((mirror_name, e.to_string())),
+                    Err(_) => Err((mirror_name, format!("{}s timeout", PER_MIRROR_TIMEOUT.as_secs()))),
                 }
             }
         })
         .collect();
 
-    while let Some(opt) = tasks.next().await {
-        if let Some(pair) = opt {
-            return Ok(pair);
+    let mut failures: Vec<(String, String)> = Vec::new();
+    while let Some(res) = tasks.next().await {
+        match res {
+            Ok(pair) => return Ok(pair),
+            Err(fail) => failures.push(fail),
         }
+    }
+    for (name, err) in &failures {
+        tracing::warn!("fetch_version mirror {}: {}", name, err);
     }
     Err(AppError::AllMirrorsFailed)
 }
 
-/// Try mirrors in order to fetch the manifest for a given version.
+/// Race every mirror in parallel for the manifest of a given version,
+/// returning whichever responds first with a parseable JSON.
+///
+/// Same shape as `fetch_version` — see that function's docstring for
+/// rationale. Pre-v0.5 this was a sequential `for` loop with no
+/// per-mirror timeout, so a single dead mirror at the head of the
+/// list (typically `official` when downloads.claude.ai is unreachable
+/// from CN) would burn reqwest's 60s global timeout before the next
+/// mirror got a chance — visible to the user as "click install,
+/// nothing happens for a minute".
 pub async fn fetch_manifest<'a>(
     client: &reqwest::Client,
     list: &'a MirrorList,
     version: &str,
 ) -> Result<(&'a Mirror, Manifest)> {
-    for m in &list.mirrors {
-        let url = m.manifest_url(version);
-        if let Ok(manifest) = upstream::fetch_manifest(client, &url).await {
-            return Ok((m, manifest));
+    let mut tasks: futures_util::stream::FuturesUnordered<_> = list
+        .mirrors
+        .iter()
+        .map(|m| {
+            let url = m.manifest_url(version);
+            let client = client.clone();
+            let mirror_name = m.name().to_string();
+            async move {
+                let r = tokio::time::timeout(
+                    PER_MIRROR_TIMEOUT,
+                    upstream::fetch_manifest(&client, &url),
+                )
+                .await;
+                match r {
+                    Ok(Ok(manifest)) => Ok((m, manifest)),
+                    Ok(Err(e)) => Err((mirror_name, e.to_string())),
+                    Err(_) => Err((mirror_name, format!("{}s timeout", PER_MIRROR_TIMEOUT.as_secs()))),
+                }
+            }
+        })
+        .collect();
+
+    let mut failures: Vec<(String, String)> = Vec::new();
+    while let Some(res) = tasks.next().await {
+        match res {
+            Ok(pair) => return Ok(pair),
+            Err(fail) => failures.push(fail),
         }
+    }
+    for (name, err) in &failures {
+        tracing::warn!("fetch_manifest mirror {}: {}", name, err);
     }
     Err(AppError::AllMirrorsFailed)
 }

@@ -60,6 +60,14 @@ pub struct InstallReport {
     pub install_path: String,
     pub elapsed_secs: u64,
     pub method: InstallMethod,
+    /// IDs of `fixes.json` entries auto-applied as part of this install
+    /// (e.g. `"cc-005-onboarding-done"` for Claude Code, so users can
+    /// `claude login` without being blocked by api.anthropic.com
+    /// reachability check). Empty when nothing was auto-applied. UI
+    /// surfaces this as a one-line note in the success message so
+    /// users know we touched `~/.claude.json` / `~/.claude/settings.json`.
+    #[serde(default)]
+    pub auto_applied_fixes: Vec<String>,
 }
 
 /// Trait every supported CLI tool implements.

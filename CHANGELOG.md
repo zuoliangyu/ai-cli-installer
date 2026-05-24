@@ -4,6 +4,39 @@
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-05-24
+
+### 安装链路彻底去卡顿 + 用户可手选镜像 + Claude Code 装完免登录卡
+
+v0.4.0 把版本探测改成并发竞速后，用户报告点「安装」按钮仍然能卡 60–120s，最终失败。复盘发现 v0.4.0 漏修了两段 —— `fetch_manifest` 和二进制下载循环仍然是顺序 for + 没有 per-mirror 超时，依赖 reqwest 全局 60s timeout 才能从一个死镜像（典型是国内不可达的 `official: downloads.claude.ai`）切下去；而 sidebar 显示的"4/8 OK"只是 HEAD 探测，跟实际 GET 下载链路弱相关，更加深了误导。这版把这两段也补齐，并把镜像选择权交给用户：高级用户可以强制走 `github-direct`（直连 GitHub）或任一具体镜像；同时 Claude Code 装完会自动应用 `cc-005-onboarding-done`，让用户能直接 `claude login`，不再被官方首次启动的 `api.anthropic.com` 连通性校验拦在登录前。
+
+### 修复
+
+- **`mirrors::fetch_manifest` 顺序循环改并发竞速 + 每镜像 8s 上限**（`crates/installer-core/src/mirrors.rs`）：之前依赖 reqwest 全局 60s timeout 切死镜像，现在跟 `fetch_version` 一样用 `FuturesUnordered`，最坏 8s 切走 `official`，hot mirror ~300ms 就开始拉 manifest
+- **二进制下载循环加 per-mirror"拿响应头" 8s 超时**（`crates/installer-core/src/downloader.rs::send_with_timeout`）：新抽象函数包住 `client.get(url).send()` —— 只覆盖连接 + 拿响应头阶段，body stream 不动（避免打断慢网络下的大文件下载）。`download_to_file` 入口走它
+- **npm 路径同步收益**：`fetch_npm_manifest` 和 `download_asset`（`crates/installer-core/src/npm_installer.rs`）也换成 `send_with_timeout`，npm 安装路径下死镜像也是 8s 切走而不是 60s
+
+### 新增
+
+- **下载来源下拉**（`src/lib/components/ToolCard.svelte`）：仅 `native` 安装方式下显示。默认「自动（推荐 · 并发竞速）」沿用全列表竞速；可选具体某个镜像（`github-direct` 那一项额外标注「直连 GitHub」）。失败时**不静默 fallback** —— 错误 banner 出现「改用自动模式重试」按钮，让用户明示选择把"用户主动选 mirror"和"自动竞速"两条路径完全分开
+- **Claude Code 装完自动应用 cc-005**（`crates/installer-core/src/tools/claude_code.rs::auto_apply_install_fixes`）：往 `~/.claude.json` 写 `hasCompletedOnboarding: true`，让用户在国内 / 中转网络下不被官方首次启动的 anthropic 连通性校验拦在登录前。fix 定义本来就在 `fixes.json` 的 `cc-005-onboarding-done` 里、由「配置修复」面板提供撤销路径
+  - 失败不抛错，仅 `tracing::warn!` —— fix apply 是装完的"顺手贴心"，不应阻塞主流程
+  - 安装成功消息里追加一行说明，告诉用户"已写入 Claude 配置，可直接 `claude login`；如需撤销请到「配置修复」面板"
+
+### 改动
+
+- **`install_tool` 入口新增 `mirror: Option<String>` 参数**（`crates/installer-core/src/app_state.rs::install_tool` + `src-tauri/src/commands.rs` + `crates/installer-web/src/routes.rs`）：`None` = 自动模式（沿用全列表）；`Some("github-direct")` = 把 `MirrorList` 缩成单元素后传给 `Tool::install`。retain 后为空返 `未知镜像: ...` 错误，避免选错时误走自动
+- **`InstallReport` 加 `auto_applied_fixes: Vec<String>`**（`crates/installer-core/src/tools/spec.rs`）：装完顺手 apply 的 fix id 列表透传给前端，便于显式提示用户改动了哪个配置文件
+- **`PER_MIRROR_TIMEOUT` 常量集中**（`mirrors.rs`）：8s 上限定义为 pub const，`fetch_version` / `fetch_manifest` / `send_with_timeout` 三处共用，便于以后统一调优
+- **删除 `fetch_channel_version` 的外层 10s `tokio::time::timeout` wrapper**（`app_state.rs`）：内层 `fetch_version` 已经有 per-mirror 8s 上限 + 并发竞速，最坏 8s 就返回，外层 wrapper 是给"老顺序循环"兜底的，竞速版本不需要
+
+### 内部
+
+- `mirrors::fetch_version` 与 `fetch_manifest` 失败时 collect 每镜像的失败原因到 `tracing::warn!`（之前丢掉，debug 痛苦）
+- `Tool` trait 不动 —— mirror 过滤在 `app_state` 层完成，Tool 实现完全不感知"是否被用户 pin 了某个镜像"
+- `ToolCard.svelte` 顶部 `mirror` state（默认 `"auto"`），新增 `handleRetryAuto()`、`mirrorOptionLabel()`；订阅 `mirrorProbes` store 显示每个镜像延迟 / 错误信息
+- 前后端 `installTool` API 第 4 参 `mirror?: string | null` 同时改 `tauriApi.ts` + `webApi.ts`（保持 Tauri / Web 两端形状一致的既定约束）
+
 ## [0.4.0] - 2026-05-23
 
 ### 开发者选项 · 日志查看器 + 镜像版本探测并发竞速

@@ -103,6 +103,7 @@ impl CodexCli {
             install_path: final_path.to_string_lossy().to_string(),
             elapsed_secs: started.elapsed().as_secs(),
             method: InstallMethod::Native,
+            auto_applied_fixes: Vec::new(),
         })
     }
 
@@ -149,6 +150,7 @@ impl CodexCli {
             install_path,
             elapsed_secs: started.elapsed().as_secs(),
             method: InstallMethod::Npm,
+            auto_applied_fixes: Vec::new(),
         })
     }
 }
