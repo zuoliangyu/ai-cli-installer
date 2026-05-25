@@ -97,8 +97,33 @@ impl ClaudeCode {
         } else {
             None
         };
-        let stdout = installer::run_self_install(&dest, install_target).await?;
-        tracing::debug!("self-install stdout:\n{}", stdout);
+        // Try the official self-install first; if it fails (typically because
+        // claude.exe's own version precheck against downloads.claude.ai gets
+        // ECONNREFUSED — see installer::run_self_install docstring), fall back
+        // to a direct copy. The binary we just verified IS the final executable.
+        match installer::run_self_install(&dest, install_target).await {
+            Ok(out) => {
+                tracing::debug!("self-install stdout:\n{}", out);
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "claude self-install failed ({}); falling back to direct deploy. \
+                     Expected when downloads.claude.ai is unreachable.",
+                    e
+                );
+                let launcher_dir = self
+                    .launcher_dir()
+                    .ok_or_else(|| AppError::Other("no home dir".into()))?;
+                let bin_name = if cfg!(target_os = "windows") {
+                    "claude.exe"
+                } else {
+                    "claude"
+                };
+                let deployed =
+                    installer::deploy_binary_to_launcher(&dest, &launcher_dir, bin_name).await?;
+                tracing::info!("deployed bootstrap to {}", deployed.display());
+            }
+        }
 
         let _ = tokio::fs::remove_file(&dest).await;
 

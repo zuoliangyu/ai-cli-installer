@@ -4,6 +4,28 @@
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-05-25
+
+### Claude Code native 安装 self-install 失败兜底
+
+v0.4.1 已经把 mirror 链路上的 timeout 全部补齐，但用户反馈安装最后一步仍然会失败：UI 显示 `Failed to fetch version from https://downloads.claude.ai/claude-code-releases/la... ECONNREFUSED · Try running with --force to override checks`。复盘发现是 claude.exe 自身回归——我们调用的 `claude install latest --force` 里，`--force` 不再 bypass bootstrap 自己回连 `downloads.claude.ai` 做的版本预检（见 claude-code issue [#13498](https://github.com/anthropics/claude-code/issues/13498) / [#13981](https://github.com/anthropics/claude-code/issues/13981) / [#51733](https://github.com/anthropics/claude-code/issues/51733)），错误信息里"建议加 --force"的提示在我们已经带了 `--force` 的情况下还出现，正是这个回归的指纹。我们 mirror 上下载下来的二进制本身就是终态可执行文件（`upstream::PlatformEntry` 注释："For Claude Code: `binary` IS the executable"），self-install 那一步其实只是"复制 + 联网 check"，所以这版加 fallback：能联通官方就走官方，不能联通就直接把二进制复制到 `~/.local/bin/claude.exe`，与 Codex 走的"直接部署"模式对齐。
+
+### 修复
+
+- **`installer::run_self_install` 失败兜底**（`crates/installer-core/src/tools/claude_code.rs::install_native`）：原来 `run_self_install(&dest, install_target).await?` 直接传播错误；现在改成 `match`——成功走原路径不变，失败时调用新的 `installer::deploy_binary_to_launcher` 把 staging 里的 bootstrap 复制到 launcher_dir，warn 日志说明走了兜底
+- **`crates/installer-core/src/installer.rs` 新增 `deploy_binary_to_launcher`**：跨平台的"复制 + 设权限"helper，复用既有 `make_executable`。等价于 `codex.rs::install_native` 第 89-97 行那段直接部署逻辑
+
+### 改动
+
+- **`installer::run_self_install` 文档注释更正**：原注释声称 `--force` "bypasses the bootstrap's own version check against downloads.claude.ai"，已与 claude.exe 当前行为不符——更正为说明 `--force` 已不再 bypass、错误信息里的"加 --force"建议是过时残留、调用方必须自己接 fallback
+
+### 内部
+
+- fallback 路径上 `auto_apply_install_fixes`（cc-005-onboarding-done）继续生效——它是纯应用层 JSON 写入，不依赖 self-install 的任何中间状态
+- PATH 管理由 `env_manager` 模块独立完成（`add_to_path` Tauri 命令 + UI 主动调用），与 self-install 是否跑通无关
+- `install_diagnostics::diagnose` 检测 native 安装时只看 `~/.local/bin/claude.exe` 是否存在，fallback 路径下 UI"未检测到本机安装来源"提示会自动消失，识别为 Native 来源——无需改诊断代码
+- Codex 安装路径未触碰；它本身就走"下载→解压→直接复制到 launcher_dir"，从来没用过 self-install，这次回归对它没有影响
+
 ## [0.4.1] - 2026-05-24
 
 ### 安装链路彻底去卡顿 + 用户可手选镜像 + Claude Code 装完免登录卡

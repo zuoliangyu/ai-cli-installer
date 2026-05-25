@@ -26,9 +26,16 @@ pub async fn make_executable(_path: &Path) -> Result<()> {
 
 /// Run `<binary> install [target] --force` and capture output. Mirrors official install.sh behavior.
 ///
-/// `--force` bypasses the bootstrap's own version check against `downloads.claude.ai`,
-/// which is unreachable from networks where the official endpoint is blocked. The binary
-/// we just downloaded from a mirror is already the right version, so the check is redundant.
+/// Historically `--force` was meant to bypass the bootstrap's own version check against
+/// `downloads.claude.ai`. As of recent claude.exe builds it no longer does — the precheck
+/// fires unconditionally and returns ECONNREFUSED on networks where the official endpoint
+/// is unreachable (the error message paradoxically still tells you to "Try running with
+/// --force to override checks"). See claude-code issues #13498 / #13981 / #51733.
+///
+/// We keep calling self-install as the preferred path so that it remains a no-op on
+/// networks that work, but the caller MUST handle errors here by falling back to a direct
+/// deploy via `deploy_binary_to_launcher` — the downloaded bootstrap IS the final
+/// executable, so a plain copy is functionally equivalent for Claude Code.
 pub async fn run_self_install(binary: &Path, target: Option<&str>) -> Result<String> {
     let mut cmd = Command::new(binary);
     cmd.arg("install");
@@ -54,4 +61,27 @@ pub async fn run_self_install(binary: &Path, target: Option<&str>) -> Result<Str
         )));
     }
     Ok(stdout)
+}
+
+/// Fallback for when `claude install` self-install fails — e.g. the bootstrap
+/// can't reach `downloads.claude.ai` for its (now non-skippable) version precheck.
+///
+/// For Claude Code the downloaded binary IS the final executable (see
+/// `upstream::PlatformEntry::binary` docstring), so deploying is just a copy
+/// + chmod. Equivalent in spirit to what `codex.rs::install_native` does for
+/// its decompressed binary.
+pub async fn deploy_binary_to_launcher(
+    binary: &Path,
+    launcher_dir: &Path,
+    bin_name: &str,
+) -> Result<PathBuf> {
+    tokio::fs::create_dir_all(launcher_dir)
+        .await
+        .map_err(|e| AppError::Install(format!("create launcher dir: {}", e)))?;
+    let final_path = launcher_dir.join(bin_name);
+    tokio::fs::copy(binary, &final_path)
+        .await
+        .map_err(|e| AppError::Install(format!("copy bootstrap to launcher: {}", e)))?;
+    make_executable(&final_path).await?;
+    Ok(final_path)
 }
