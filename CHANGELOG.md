@@ -4,6 +4,12 @@
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-07-10
+
+### 修复
+
+- Vite 开发服务器忽略 Cargo workspace 的 `target/` 目录，避免 Windows 下 Rust 编译产物被占用时触发 `EBUSY` 并中断 `tauri dev`。
+
 ### 安全
 
 - Web 服务移除宽松 CORS；绑定非回环地址时强制使用访问令牌，API 与下载进度 WebSocket 均校验令牌。

@@ -2,6 +2,8 @@
 
 为 Claude Code / Codex CLI 提供镜像加速下载与一键安装的桌面应用，同时也能作为本地 / 远程 Web 服务运行。Tauri + Svelte 5 + Rust。
 
+当前版本：**v0.5.1**
+
 > Claude Code 走「镜像加速」时，若官方 bootstrap 的自我安装（`claude install`）因为回连 `downloads.claude.ai` 失败（国内网络常见），会自动 fallback 到直接把已校验的二进制部署到 `~/.local/bin/claude.exe`——保证装得上。
 
 ## 架构
