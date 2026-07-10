@@ -17,7 +17,14 @@
 </script>
 
 <div class="flex flex-col gap-1">
-  <div class="h-1.5 bg-muted rounded-full overflow-hidden">
+  <div
+    class="h-1.5 bg-muted rounded-full overflow-hidden"
+    role="progressbar"
+    aria-label="下载进度"
+    aria-valuemin="0"
+    aria-valuemax="100"
+    aria-valuenow={total ? Math.round(pct) : undefined}
+  >
     {#if total}
       <div class="h-full bg-primary transition-[width] duration-150" style="width: {pct}%"></div>
     {:else}

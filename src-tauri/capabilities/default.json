@@ -13,7 +13,6 @@
     "core:menu:default",
     "core:tray:default",
     "updater:default",
-    "dialog:default",
     "process:default",
     "shell:allow-open"
   ]

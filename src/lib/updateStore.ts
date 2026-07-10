@@ -1,4 +1,5 @@
 import { writable, get } from "svelte/store";
+import { openExternalUrl } from "./openExternal";
 
 declare const __IS_TAURI__: boolean;
 
@@ -20,8 +21,6 @@ export interface UpdateState {
   errorMessage: string | null;
   /** 启动后是否已经触发过一次自动检查（避免每次切页都跑） */
   startupChecked: boolean;
-  /** 启动后是否已经弹过确认框（避免同一会话弹两次） */
-  startupPrompted: boolean;
 }
 
 const DISMISSED_VERSION_KEY = "aci_update_dismissed_version";
@@ -35,7 +34,6 @@ const initial: UpdateState = {
   dismissed: false,
   errorMessage: null,
   startupChecked: false,
-  startupPrompted: false,
 };
 
 export const updateState = writable<UpdateState>(initial);
@@ -124,16 +122,7 @@ export async function openDownloadPage(): Promise<void> {
   const { newVersion } = get(updateState);
   const tag = newVersion ? `v${newVersion}` : "latest";
   const url = `https://github.com/zuoliangyu/ai-cli-installer/releases/tag/${tag}`;
-  if (!__IS_TAURI__) {
-    window.open(url, "_blank");
-    return;
-  }
-  try {
-    const { open } = await import("@tauri-apps/plugin-shell");
-    await open(url);
-  } catch {
-    window.open(url, "_blank");
-  }
+  await openExternalUrl(url);
 }
 
 export function dismiss(): void {
@@ -144,7 +133,7 @@ export function dismiss(): void {
   patch({ dismissed: true });
 }
 
-/** 启动时跑一次：加载版本号 + 静默检查 + 发现新版时弹一次系统对话框 */
+/** 启动时跑一次：加载版本号并静默检查，结果由非阻塞提示展示。 */
 export async function runStartupCheck(): Promise<void> {
   if (!__IS_TAURI__) return;
   const cur = get(updateState);
@@ -157,32 +146,4 @@ export async function runStartupCheck(): Promise<void> {
   await new Promise((r) => setTimeout(r, 1500));
   await checkForUpdate();
 
-  const after = get(updateState);
-  if (
-    after.status !== "available" ||
-    !after.newVersion ||
-    after.dismissed ||
-    after.startupPrompted
-  ) {
-    return;
-  }
-  patch({ startupPrompted: true });
-
-  try {
-    const { confirm } = await import("@tauri-apps/plugin-dialog");
-    const ok = await confirm(
-      `当前版本 v${after.currentVersion || "?"}，检测到新版本 v${after.newVersion}。是否立即更新并在完成后重启？`,
-      {
-        title: "发现新版本",
-        kind: "info",
-        okLabel: "立即更新",
-        cancelLabel: "暂不更新",
-      }
-    );
-    if (ok) {
-      await downloadAndInstall();
-    }
-  } catch (e) {
-    console.warn("Startup update prompt failed:", e);
-  }
 }

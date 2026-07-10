@@ -143,14 +143,14 @@ pub struct PathBody {
 }
 
 pub async fn add_to_path(Json(body): Json<PathBody>) -> impl IntoResponse {
-    match app_state::add_to_path(&body.tool_id, body.scope.unwrap_or(PathScope::System)).await {
+    match app_state::add_to_path(&body.tool_id, body.scope.unwrap_or(PathScope::User)).await {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(e) => err(e).into_response(),
     }
 }
 
 pub async fn remove_from_path(Json(body): Json<PathBody>) -> impl IntoResponse {
-    match app_state::remove_from_path(&body.tool_id, body.scope.unwrap_or(PathScope::System)).await {
+    match app_state::remove_from_path(&body.tool_id, body.scope.unwrap_or(PathScope::User)).await {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(e) => err(e).into_response(),
     }

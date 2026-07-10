@@ -4,17 +4,28 @@
 //! the same logical stream regardless of transport.
 
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::extract::State;
-use axum::response::Response;
+use axum::extract::{Query, State};
+use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
+use serde::Deserialize;
 use tokio::sync::broadcast;
 
-use crate::ProgressTx;
+use crate::{token_matches, ProgressTx, ServerState};
+
+#[derive(Deserialize)]
+pub struct AuthQuery {
+    token: Option<String>,
+}
 
 pub async fn progress_ws_handler(
     ws: WebSocketUpgrade,
-    State(tx): State<ProgressTx>,
+    State(state): State<ServerState>,
+    Query(auth): Query<AuthQuery>,
 ) -> Response {
-    ws.on_upgrade(move |socket| handle_progress_socket(socket, tx))
+    if !token_matches(state.access_token.as_deref(), auth.token.as_deref()) {
+        return (StatusCode::UNAUTHORIZED, "缺少或无效的访问令牌").into_response();
+    }
+    ws.on_upgrade(move |socket| handle_progress_socket(socket, state.progress_tx))
 }
 
 async fn handle_progress_socket(mut socket: WebSocket, tx: ProgressTx) {

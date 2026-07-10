@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { RefreshCw, ArrowDownToLine, Trash2 } from "lucide-svelte";
+  import { RefreshCw, ArrowDownToLine } from "lucide-svelte";
   import { getLogs } from "../api";
 
   let lines = $state<string[]>([]);
@@ -10,11 +10,12 @@
   let timer: ReturnType<typeof setInterval> | undefined;
 
   async function refresh() {
+    if (loading) return;
     loading = true;
     try {
       lines = await getLogs();
-    } catch {
-      lines = ["[获取日志失败]"];
+    } catch (error) {
+      lines = [`[获取日志失败] ${error instanceof Error ? error.message : String(error)}`];
     } finally {
       loading = false;
     }
@@ -25,10 +26,6 @@
     requestAnimationFrame(() => {
       if (container) container.scrollTop = container.scrollHeight;
     });
-  }
-
-  function clear() {
-    lines = [];
   }
 
   onMount(() => {
@@ -57,14 +54,6 @@
     >
       <ArrowDownToLine class="w-3 h-3" />
       滚动到底部
-    </button>
-
-    <button
-      onclick={clear}
-      class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md border border-border bg-card hover:bg-accent/50 text-muted-foreground hover:text-foreground transition-colors"
-    >
-      <Trash2 class="w-3 h-3" />
-      清除显示
     </button>
 
     <label class="ml-auto flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer select-none">

@@ -228,6 +228,6 @@ pub fn apply_env(base_url: &str, auth_token: &str) -> Result<()> {
 
     let pretty = serde_json::to_string_pretty(&value)
         .map_err(|e| AppError::Other(format!("serialize settings.json: {}", e)))?;
-    std::fs::write(&path, pretty)?;
+    crate::config_file::write_with_backup(&path, pretty)?;
     Ok(())
 }

@@ -15,14 +15,25 @@
 
   let appReady = $state(false);
   let initError = $state<string | null>(null);
+  let fixesMounted = $state(false);
 
-  onMount(async () => {
+  $effect(() => {
+    if ($page === "fixes") fixesMounted = true;
+  });
+
+  async function initialize() {
+    initError = null;
+    appReady = false;
     try {
       await initApp();
       appReady = true;
     } catch (err) {
       initError = err instanceof Error ? err.message : String(err);
     }
+  }
+
+  onMount(() => {
+    initialize();
     // 不阻塞 UI；失败也不影响主流程
     runStartupCheck().catch(() => {});
   });
@@ -41,12 +52,13 @@
 
   <main class="flex-1 min-w-0 {$page === 'fixes' || $page === 'logs' ? 'overflow-hidden' : 'overflow-y-auto'}">
     {#if initError}
-      <div class="m-6 px-4 py-3 rounded-md text-sm bg-destructive/10 text-destructive">
-        初始化失败：{initError}
+      <div role="alert" class="m-6 px-4 py-3 rounded-md text-sm bg-destructive/10 text-destructive">
+        <div>初始化失败：{initError}</div>
+        <button onclick={initialize} class="mt-2 text-xs text-primary hover:underline">重新加载</button>
       </div>
     {:else if !appReady}
-      <div class="flex h-full items-center justify-center text-sm text-muted-foreground">
-        正在加载…
+      <div role="status" class="flex h-full items-center justify-center text-sm text-muted-foreground">
+        正在检测本机安装和版本信息，最多约 8 秒…
       </div>
     {:else}
       <div class="max-w-3xl mx-auto p-6 flex flex-col gap-6 {$page === 'fixes' || $page === 'logs' ? 'h-full min-h-0' : ''}">
@@ -72,9 +84,11 @@
         {:else if $page === "logs"}
           <LogViewer />
         {/if}
-        <div class="{$page === 'fixes' ? 'contents' : 'hidden'}">
-          <FixesSection />
-        </div>
+        {#if fixesMounted}
+          <div class="{$page === 'fixes' ? 'contents' : 'hidden'}">
+            <FixesSection />
+          </div>
+        {/if}
       </div>
     {/if}
   </main>

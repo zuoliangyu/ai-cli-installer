@@ -85,14 +85,14 @@ export async function checkPathStatus(toolId: string): Promise<PathStatus> {
 
 export async function addToPath(
   toolId: string,
-  scope: PathScope = "system"
+  scope: PathScope = "user"
 ): Promise<void> {
   await invoke<void>("add_to_path", { toolId, scope });
 }
 
 export async function removeFromPath(
   toolId: string,
-  scope: PathScope = "system"
+  scope: PathScope = "user"
 ): Promise<void> {
   await invoke<void>("remove_from_path", { toolId, scope });
 }

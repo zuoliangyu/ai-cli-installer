@@ -1,13 +1,14 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { listFixes, applyFixes, removeFixes, openPath } from "../api";
-  import { open as openExternal } from "@tauri-apps/plugin-shell";
+  import { openExternalUrl } from "../openExternal";
   import type { Fix } from "../types";
   import { ExternalLink, FileText } from "lucide-svelte";
 
   let fixes = $state<Fix[]>([]);
   let selected = $state<Set<string>>(new Set());
   let busy = $state(false);
+  let loading = $state(true);
   let message = $state<string | null>(null);
   let touchedFiles = $state<string[]>([]);
   let error = $state<string | null>(null);
@@ -17,6 +18,7 @@
   let listViewport = $state<HTMLDivElement | null>(null);
   let tagPanelOpen = $state(false);
   let selectedTags = $state<Set<string>>(new Set());
+  let query = $state("");
 
   const pageSize = 10;
 
@@ -48,6 +50,8 @@
   });
 
   async function loadFixes() {
+    loading = true;
+    loadError = null;
     try {
       fixes = await listFixes();
       selected = new Set(
@@ -58,6 +62,8 @@
       clampPage();
     } catch (e) {
       loadError = e instanceof Error ? e.message : String(e);
+    } finally {
+      loading = false;
     }
   }
 
@@ -73,8 +79,20 @@
     let list = fixes;
     if (filter === "configured") list = list.filter((f) => f.configured);
     if (filter === "pending") list = list.filter((f) => !f.configured);
-    if (selectedTags.size === 0) return list;
-    return list.filter((f) => fixTags(f, false).some((t) => selectedTags.has(t.label)));
+    if (selectedTags.size > 0) {
+      list = list.filter((f) => fixTags(f, false).some((t) => selectedTags.has(t.label)));
+    }
+    const needle = query.trim().toLocaleLowerCase();
+    if (!needle) return list;
+    return list.filter((fix) =>
+      [
+        fix.code,
+        fix.title,
+        fix.description,
+        ...fix.tags,
+        ...fix.patches.map((patch) => patch.path),
+      ].some((text) => text.toLocaleLowerCase().includes(needle))
+    );
   });
   const pageCount = $derived(Math.max(1, Math.ceil(filteredFixes.length / pageSize)));
   const pagedFixes = $derived(
@@ -99,6 +117,15 @@
     selectedTags = new Set();
     currentPage = 1;
     scrollListTop();
+  }
+
+  function updateQuery(event: Event) {
+    query = (event.currentTarget as HTMLInputElement).value;
+    currentPage = 1;
+  }
+
+  function clearSelection() {
+    selected = new Set();
   }
 
   function setPage(next: number) {
@@ -155,6 +182,7 @@
 
   async function apply() {
     if (selected.size === 0) return;
+    if (!window.confirm(`将应用 ${selected.size} 项配置。同名字段会被覆盖，写入前会生成 .bak 递增备份。是否继续？`)) return;
     busy = true;
     error = null;
     message = null;
@@ -175,6 +203,7 @@
 
   async function removeFix(fix: Fix) {
     if (!fix.configured) return;
+    if (!window.confirm(`将移除“${fix.title}”对应的配置项，写入前会生成 .bak 递增备份。是否继续？`)) return;
     busy = true;
     error = null;
     message = null;
@@ -193,7 +222,7 @@
 
   async function openDoc(url: string | null) {
     if (!url) return;
-    await openExternal(url).catch(() => {});
+    await openExternalUrl(url).catch(() => {});
   }
 
   async function openFile(path: string) {
@@ -208,29 +237,39 @@
   <header class="shrink-0">
     <h2 class="text-base font-semibold text-foreground">故障排查 / 配置补丁</h2>
     <p class="mt-1 text-xs text-muted-foreground leading-relaxed">
-      勾选后点击「应用」会把对应字段写入对应配置文件，<strong class="text-foreground">保留</strong>已有内容。
-      内容来源：<button
-        class="text-primary hover:underline"
-        onclick={() => openDoc('https://docs.micuapi.ai')}
-      >OCC 配置文档</button>。
+      勾选后点击「应用」会写入对应配置文件；其他字段保留，同名字段会覆盖，原文件保留为 <code class="font-mono">.bak*</code> 递增备份。
     </p>
   </header>
 
   {#if loadError}
-    <div class="px-3 py-2 rounded-md text-xs bg-destructive/10 text-destructive">
-      加载修复列表失败：{loadError}
+    <div role="alert" class="px-3 py-2 rounded-md text-xs bg-destructive/10 text-destructive">
+      <div>加载修复列表失败：{loadError}</div>
+      <button onclick={loadFixes} class="mt-1 text-primary hover:underline">重试</button>
+    </div>
+  {:else if loading}
+    <div class="px-3 py-6 text-center text-xs text-muted-foreground border border-dashed border-border rounded-md">
+      加载中…
     </div>
   {:else if fixes.length === 0}
     <div class="px-3 py-6 text-center text-xs text-muted-foreground border border-dashed border-border rounded-md">
-      加载中…
+      暂无配置修复。
     </div>
   {:else}
     <!-- Filters -->
     <div class="shrink-0 flex flex-col gap-2">
+      <input
+        type="search"
+        value={query}
+        oninput={updateQuery}
+        aria-label="搜索配置修复"
+        placeholder="搜索标题、编号、说明、标签或配置项"
+        class="w-full rounded-md border border-border bg-background px-3 py-1.5 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+      />
       <div class="flex flex-wrap gap-1.5">
         {#each [{ k: "all", l: `全部 ${fixes.length}` }, { k: "configured", l: `已配置 ${configuredCount}` }, { k: "pending", l: `未配置 ${fixes.length - configuredCount}` }] as f}
           <button
             onclick={() => setFilter(f.k as typeof filter)}
+            aria-pressed={filter === f.k}
             class="px-2.5 py-1 text-xs rounded-md border transition-colors {filter === f.k
               ? 'border-primary bg-primary/10 text-primary'
               : 'border-border text-muted-foreground hover:bg-accent/50 hover:text-foreground'}"
@@ -240,6 +279,7 @@
         {/each}
         <button
           onclick={() => (tagPanelOpen = !tagPanelOpen)}
+          aria-expanded={tagPanelOpen}
           class="px-2.5 py-1 text-xs rounded-md border transition-colors {tagPanelOpen || selectedTags.size > 0
             ? 'border-primary bg-primary/10 text-primary'
             : 'border-border text-muted-foreground hover:bg-accent/50 hover:text-foreground'}"
@@ -293,12 +333,13 @@
                 ? 'border-primary bg-primary/5'
                 : 'border-border bg-card'}"
           >
-            <label class="flex items-start gap-3 p-3 cursor-pointer">
+            <div class="flex items-start gap-3 p-3">
               <input
                 type="checkbox"
                 checked={fix.configured || selected.has(fix.id)}
                 onchange={() => toggle(fix)}
                 disabled={busy || fix.configured}
+                aria-label={fix.configured ? `${fix.title} 已配置` : `选择 ${fix.title}`}
                 class="mt-0.5 accent-primary cursor-pointer disabled:cursor-not-allowed"
               />
               <div class="flex-1 min-w-0 flex flex-col gap-1.5">
@@ -361,10 +402,15 @@
                   </button>
                 {/if}
               </div>
-            </label>
+            </div>
           </li>
         {/each}
       </ul>
+      {#if pagedFixes.length === 0}
+        <div class="px-3 py-6 text-center text-xs text-muted-foreground">
+          没有匹配的配置修复。
+        </div>
+      {/if}
     </div>
   {/if}
 
@@ -372,7 +418,10 @@
     <footer class="shrink-0 border-t border-border pt-3 flex flex-col gap-2 bg-background">
       <div class="flex flex-wrap items-center justify-between gap-2">
         <div class="flex items-center gap-2 text-xs text-muted-foreground">
-          <span>已选 {selected.size} / {fixes.length}</span>
+          <span>已选 {selected.size} 项 · 当前结果 {filteredFixes.length} 项</span>
+          {#if selected.size > 0}
+            <button onclick={clearSelection} class="text-primary hover:underline">清空已选</button>
+          {/if}
           {#if filteredFixes.length > pageSize}
             <span>第 {currentPage} / {pageCount} 页</span>
           {/if}
@@ -404,7 +453,7 @@
         </div>
       </div>
       {#if message}
-        <div class="px-3 py-2 rounded-md text-xs bg-success/10 text-success flex flex-col gap-1">
+        <div role="status" class="px-3 py-2 rounded-md text-xs bg-success/10 text-success flex flex-col gap-1">
           <div>{message}</div>
           {#if touchedFiles.length > 0}
             <div class="flex flex-col gap-0.5">
@@ -423,7 +472,7 @@
         </div>
       {/if}
       {#if error}
-        <div class="px-3 py-2 rounded-md text-xs font-mono bg-destructive/10 text-destructive whitespace-pre-wrap break-words">
+        <div role="alert" class="px-3 py-2 rounded-md text-xs font-mono bg-destructive/10 text-destructive whitespace-pre-wrap break-words">
           {error}
         </div>
       {/if}

@@ -119,8 +119,8 @@
     error = null;
     message = null;
     try {
-      await addToPath(tool.id, "system");
-      message = "已加入系统 PATH。请重启终端或新开窗口生效。";
+      await addToPath(tool.id, "user");
+      message = "已加入用户 PATH。请重启终端或新开窗口生效。";
       await refreshPathStatus();
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
@@ -129,13 +129,13 @@
     }
   }
 
-  async function handleRemovePath() {
+  async function handleRemovePath(scope: "system" | "user") {
     pathBusy = true;
     error = null;
     message = null;
     try {
-      await removeFromPath(tool.id, "system");
-      message = "已从系统 PATH 移除。";
+      await removeFromPath(tool.id, scope);
+      message = `已从${scope === "system" ? "系统" : "用户"} PATH 移除。`;
       await refreshPathStatus();
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
@@ -221,7 +221,7 @@
 
   /** launcher_dir 是「本应用的 native 安装目录」(~/.local/bin)。只有用户在用
    * native 安装、或还没装任何东西时才有意义；如果用户走的是 npm/pnpm/yarn/bun
-   * 等其它 shim，把那行藏掉避免"加入系统 PATH"的按钮误导。 */
+   * 等其它 shim，把那行藏掉避免“加入 PATH”的按钮误导。 */
   function shouldShowLauncherPath(): boolean {
     const installs = tool.installations ?? [];
     if (installs.length === 0) return true;
@@ -229,7 +229,7 @@
   }
 </script>
 
-<article class="bg-card border border-border rounded-lg p-4 flex flex-col gap-3">
+<article aria-busy={busy || pathBusy} class="bg-card border border-border rounded-lg p-4 flex flex-col gap-3">
   <!-- Head -->
   <div class="flex justify-between items-start gap-3">
     <div class="flex-1 min-w-0">
@@ -264,7 +264,7 @@
           title={tool.latest_version_stale ? STALE_HINT : undefined}
           class="px-3 py-1.5 text-xs whitespace-nowrap rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
         >
-          {channelLabel("latest", tool.latest_version)}
+          {busy && lastChannel === "latest" ? "安装中…" : channelLabel("latest", tool.latest_version)}
         </button>
       {/if}
       {#if channelFailed("stable")}
@@ -283,7 +283,7 @@
           title={tool.stable_version_stale ? STALE_HINT : undefined}
           class="px-3 py-1.5 text-xs whitespace-nowrap rounded-md border border-border bg-muted/50 text-foreground hover:bg-accent transition-colors disabled:opacity-50"
         >
-          {channelLabel("stable", tool.stable_version)}
+          {busy && lastChannel === "stable" ? "安装中…" : channelLabel("stable", tool.stable_version)}
         </button>
       {/if}
     </div>
@@ -420,7 +420,7 @@
           <p class="leading-relaxed text-muted-foreground">
             检测到 {tool.installations.length} 处安装，但都不在当前 PATH。终端运行
             <code class="font-mono bg-muted px-1 py-0.5 rounded text-foreground">{tool.id === "claude" ? "claude" : tool.id}</code>
-            时会找不到命令；可使用上面的「一键加入系统 PATH」按钮，或选其中一处的目录手动加进 PATH。
+            时会找不到命令；可使用上面的「一键加入用户 PATH」按钮，或选其中一处的目录手动加进 PATH。
           </p>
         </div>
       {:else if shadowedInstalls().length > 0}
@@ -496,13 +496,13 @@
         </span>
       </div>
       <div class="shrink-0">
-        {#if pathStatus.in_system_path}
+        {#if pathStatus.in_system_path || pathStatus.in_user_path}
           <button
-            onclick={handleRemovePath}
+            onclick={() => handleRemovePath(pathStatus!.in_system_path ? "system" : "user")}
             disabled={pathBusy}
             class="px-2.5 py-1 text-xs rounded-md border border-border hover:bg-accent transition-colors disabled:opacity-50"
           >
-            移除
+            {pathBusy ? "处理中…" : "移除"}
           </button>
         {:else}
           <button
@@ -510,7 +510,7 @@
             disabled={pathBusy}
             class="px-2.5 py-1 text-xs rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
           >
-            一键加入系统 PATH
+            {pathBusy ? "处理中…" : "一键加入用户 PATH"}
           </button>
         {/if}
       </div>
@@ -518,10 +518,10 @@
   {/if}
 
   {#if message}
-    <div class="px-3 py-2 rounded-md text-xs bg-success/10 text-success whitespace-pre-line">{message}</div>
+    <div role="status" class="px-3 py-2 rounded-md text-xs bg-success/10 text-success whitespace-pre-line">{message}</div>
   {/if}
   {#if error}
-    <div class="flex flex-col gap-1.5 px-3 py-2 rounded-md text-xs bg-destructive/10 text-destructive">
+    <div role="alert" class="flex flex-col gap-1.5 px-3 py-2 rounded-md text-xs bg-destructive/10 text-destructive">
       <div class="font-mono whitespace-pre-wrap break-words">{error}</div>
       {#if mirror !== AUTO_MIRROR}
         <div class="flex items-center gap-2">

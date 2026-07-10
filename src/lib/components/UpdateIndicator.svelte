@@ -32,7 +32,7 @@
         v{$updateState.currentVersion || "..."}
       </span>
       {#if hasUpdate}
-        <span class="relative flex h-2 w-2" aria-label="有新版本">
+        <span class="relative flex h-2 w-2" role="img" aria-label="有新版本">
           <span
             class="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75"
           ></span>
@@ -74,6 +74,7 @@
           <span class="text-sm font-medium text-foreground">新版本可用</span>
           <button
             onclick={dismiss}
+            aria-label="忽略此版本"
             class="text-muted-foreground hover:text-foreground transition-colors"
             title="忽略此版本"
           >
@@ -98,6 +99,7 @@
           </button>
           <button
             onclick={() => openDownloadPage()}
+            aria-label="在浏览器查看 release"
             class="inline-flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs border border-border bg-muted/40 text-foreground hover:bg-accent transition-colors"
             title="在浏览器查看 release"
           >

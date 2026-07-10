@@ -318,7 +318,7 @@ fn apply_patches_to_file(path: &std::path::Path, patches: &[&Patch]) -> Result<(
 
     let pretty = serde_json::to_string_pretty(&root)
         .map_err(|e| AppError::Other(format!("serialize {}: {}", path.display(), e)))?;
-    std::fs::write(path, pretty)?;
+    crate::config_file::write_with_backup(path, pretty)?;
     Ok(())
 }
 
@@ -347,7 +347,7 @@ fn remove_patches_from_file(path: &std::path::Path, patches: &[&Patch]) -> Resul
     if removed > 0 {
         let pretty = serde_json::to_string_pretty(&root)
             .map_err(|e| AppError::Other(format!("serialize {}: {}", path.display(), e)))?;
-        std::fs::write(path, pretty)?;
+        crate::config_file::write_with_backup(path, pretty)?;
     }
 
     Ok(removed)

@@ -121,7 +121,21 @@ npm run web          # 等价于 cargo run -p installer-web
 
 默认监听 `http://127.0.0.1:3210`。可通过 `--host` / `--port` 或环境变量 `INSTALLER_HOST` / `INSTALLER_PORT` 调整。
 
+### 远程 Web 访问
+
+绑定非本机地址时必须设置至少 16 位访问令牌，否则服务会拒绝启动：
+
+```powershell
+$env:INSTALLER_HOST="0.0.0.0"
+$env:INSTALLER_TOKEN="请替换为至少16位的随机令牌"
+npm run web
+```
+
+浏览器使用 `http://服务器地址:3210/?token=访问令牌` 首次打开。页面会把令牌保存到当前标签页的 `sessionStorage`，并立即从地址栏移除；API 使用 Bearer 鉴权，WebSocket 使用同一令牌。公网使用时仍应放在 HTTPS 反向代理或 SSH 隧道后，避免明文 HTTP 泄露令牌和 API Key。
+
 > 注意：Web 模式改的是**运行 installer-web 的那台机器**的环境（`~/.local/bin`、PATH、`~/.claude/settings.json`）。容器化对该应用没有意义，因此不提供 Docker 镜像。
+
+配置修复、中转预设和 Unix PATH 写入前会保留递增备份：首次为 `.bak`，后续为 `.bak.1`、`.bak.2` 等。同名配置字段会覆盖，其他字段保持不变。
 
 ## 构建
 

@@ -1,11 +1,11 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
   import {
     listClaudePresets,
     getClaudeSettings,
     applyClaudePreset,
   } from "../api";
-  import { open as openExternal } from "@tauri-apps/plugin-shell";
+  import { openExternalUrl } from "../openExternal";
   import type { ClaudePreset, ClaudeSettingsEnv } from "../types";
   import { CheckCircle2, ExternalLink, X } from "lucide-svelte";
 
@@ -14,17 +14,26 @@
   let selectedPreset = $state<ClaudePreset | null>(null);
   let apiKey = $state("");
   let busy = $state(false);
+  let loading = $state(true);
   let message = $state<string | null>(null);
   let error = $state<string | null>(null);
+  let apiKeyInput = $state<HTMLInputElement | null>(null);
+  let previousFocus: HTMLElement | null = null;
 
   onMount(refresh);
 
   async function refresh() {
+    loading = true;
+    error = null;
     try {
-      presets = await listClaudePresets();
-      currentEnv = await getClaudeSettings();
+      [presets, currentEnv] = await Promise.all([
+        listClaudePresets(),
+        getClaudeSettings(),
+      ]);
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
+    } finally {
+      loading = false;
     }
   }
 
@@ -36,16 +45,20 @@
     );
   }
 
-  function pick(p: ClaudePreset) {
+  async function pick(p: ClaudePreset) {
+    previousFocus = document.activeElement as HTMLElement | null;
     selectedPreset = p;
     apiKey = "";
     error = null;
     message = null;
+    await tick();
+    apiKeyInput?.focus();
   }
 
   function cancel() {
     selectedPreset = null;
     apiKey = "";
+    tick().then(() => previousFocus?.focus());
   }
 
   async function apply() {
@@ -55,10 +68,12 @@
     message = null;
     try {
       await applyClaudePreset(selectedPreset.base_url, apiKey.trim());
-      message = `已写入 ${selectedPreset.name} 的配置到 ~/.claude/settings.json`;
+      message = `已写入 ${selectedPreset.name} 的配置到 ~/.claude/settings.json，原文件已保留为 .bak* 递增备份`;
       selectedPreset = null;
       apiKey = "";
       await refresh();
+      await tick();
+      previousFocus?.focus();
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     } finally {
@@ -66,9 +81,8 @@
     }
   }
 
-  async function openPresetUrl(p: ClaudePreset) {
-    const url = p.api_key_url ?? p.website_url;
-    if (url) await openExternal(url).catch(() => {});
+  function handleDialogKeydown(event: KeyboardEvent) {
+    if (event.key === "Escape" && !busy) cancel();
   }
 </script>
 
@@ -79,7 +93,7 @@
       只写入 <code class="font-mono text-[11px] bg-muted px-1 py-0.5 rounded">~/.claude/settings.json</code>
       的 <code class="font-mono text-[11px] bg-muted px-1 py-0.5 rounded">env.ANTHROPIC_BASE_URL</code> 与
       <code class="font-mono text-[11px] bg-muted px-1 py-0.5 rounded">env.ANTHROPIC_AUTH_TOKEN</code>，
-      其它字段保留不动
+      其它字段保留不动；同名字段会覆盖，原文件保留为 <code class="font-mono">.bak*</code> 递增备份
     </p>
   </header>
 
@@ -109,13 +123,19 @@
             <span class="text-[10px] text-muted-foreground">cc-switch</span>
           {/if}
         </div>
-        <button
-          onclick={() => openPresetUrl(p)}
-          class="text-left text-[11px] font-mono text-primary hover:underline truncate"
-          title={p.base_url}
-        >
-          {p.base_url}
-        </button>
+        <div class="flex items-center gap-2 min-w-0">
+          <code class="flex-1 text-[11px] font-mono text-muted-foreground truncate" title={p.base_url}>
+            {p.base_url}
+          </code>
+          {#if p.website_url}
+            <button
+              onclick={() => openExternalUrl(p.website_url!).catch(() => {})}
+              class="inline-flex items-center gap-1 text-[11px] text-primary hover:underline shrink-0"
+            >
+              官网 <ExternalLink class="w-3 h-3" />
+            </button>
+          {/if}
+        </div>
         <button
           onclick={() => pick(p)}
           disabled={busy}
@@ -127,17 +147,21 @@
     {/each}
   </div>
 
-  {#if presets.length === 0}
+  {#if loading}
+    <div class="px-3 py-6 text-center text-xs text-muted-foreground border border-dashed border-border rounded-md">
+      正在加载预设…
+    </div>
+  {:else if presets.length === 0}
     <div class="px-3 py-6 text-center text-xs text-muted-foreground border border-dashed border-border rounded-md">
       暂无可用预设。
     </div>
   {/if}
 
   {#if message}
-    <div class="px-3 py-2 rounded-md text-xs bg-success/10 text-success">{message}</div>
+    <div role="status" class="px-3 py-2 rounded-md text-xs bg-success/10 text-success">{message}</div>
   {/if}
   {#if error}
-    <div class="px-3 py-2 rounded-md text-xs bg-destructive/10 text-destructive whitespace-pre-wrap break-words">
+    <div role="alert" class="px-3 py-2 rounded-md text-xs bg-destructive/10 text-destructive whitespace-pre-wrap break-words">
       {error}
     </div>
   {/if}
@@ -152,15 +176,17 @@
     <div
       class="bg-card border border-border rounded-lg shadow-lg w-[26rem] max-w-[90vw] flex flex-col"
       onclick={(e) => e.stopPropagation()}
-      onkeydown={(e) => e.stopPropagation()}
+      onkeydown={handleDialogKeydown}
       role="dialog"
       aria-modal="true"
+      aria-labelledby="preset-dialog-title"
       tabindex="-1"
     >
       <div class="flex items-center justify-between p-4 border-b border-border">
-        <h3 class="text-sm font-semibold text-foreground">{selectedPreset.name}</h3>
+        <h3 id="preset-dialog-title" class="text-sm font-semibold text-foreground">{selectedPreset.name}</h3>
         <button
           onclick={cancel}
+          aria-label="关闭预设配置"
           class="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-colors"
         >
           <X class="w-4 h-4" />
@@ -174,17 +200,19 @@
         <label class="flex flex-col gap-1.5">
           <span class="text-xs text-muted-foreground">API Key</span>
           <input
+            bind:this={apiKeyInput}
             type="password"
             bind:value={apiKey}
             placeholder="粘贴该中转站的 API key"
-            autocomplete="off"
+            autocomplete="new-password"
+            spellcheck="false"
             disabled={busy}
             class="w-full bg-muted border border-border rounded-md px-3 py-2 text-xs font-mono text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
           />
         </label>
         {#if selectedPreset.api_key_url}
           <button
-            onclick={() => openPresetUrl(selectedPreset!)}
+            onclick={() => openExternalUrl(selectedPreset!.api_key_url!).catch(() => {})}
             class="inline-flex items-center gap-1 text-xs text-primary hover:underline self-start"
           >
             没有 key？前往 {selectedPreset.api_key_url} 获取

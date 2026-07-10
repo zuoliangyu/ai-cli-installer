@@ -11,6 +11,7 @@
 //! directly — each shell adapts the callback to its own transport.
 
 pub mod app_state;
+mod config_file;
 pub mod downloader;
 pub mod env_manager;
 pub mod error;

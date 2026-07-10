@@ -18,7 +18,6 @@ installer-core = { path = "../crates/installer-core" }
 
 tauri = { version = "2", features = [] }
 tauri-plugin-updater = "2"
-tauri-plugin-dialog = "2"
 tauri-plugin-process = "2"
 tauri-plugin-shell = "2"
 

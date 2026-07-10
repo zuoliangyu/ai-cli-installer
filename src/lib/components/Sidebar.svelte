@@ -8,14 +8,18 @@
   import { devMode } from "../devMode";
 
   let probing = $state(false);
+  let probeError = $state<string | null>(null);
   let hasUpdate = $derived(
     $updateState.status === "available" && !$updateState.dismissed
   );
 
   async function rerunProbe() {
     probing = true;
+    probeError = null;
     try {
       await probeMirrors();
+    } catch (error) {
+      probeError = error instanceof Error ? error.message : String(error);
     } finally {
       probing = false;
     }
@@ -36,7 +40,7 @@
   const tailItems: NavItem[] = [
     { id: "about", label: "关于", icon: Info },
   ];
-  let items = $derived([...baseItems, ...($devMode ? devItems : []), ...tailItems]);
+  let items = $derived([...baseItems, ...(__IS_TAURI__ && $devMode ? devItems : []), ...tailItems]);
 </script>
 
 <aside class="w-60 h-full border-r border-border bg-card flex flex-col shrink-0">
@@ -55,6 +59,7 @@
     <button
       onclick={rerunProbe}
       disabled={probing}
+      aria-busy={probing}
       class="w-full flex items-center justify-between gap-2 px-3 py-2 rounded-md text-xs border border-border bg-muted/40 hover:bg-accent/50 hover:text-foreground text-muted-foreground transition-colors disabled:opacity-60"
       title="重新测试镜像延迟"
     >
@@ -70,9 +75,14 @@
           <span class="text-muted-foreground">/{mirrorTotal}</span>
         </span>
       {:else}
-        <span class="text-muted-foreground">…</span>
+        <span class={probeError ? "text-destructive" : "text-muted-foreground"}>{probeError ? "失败" : "…"}</span>
       {/if}
     </button>
+    {#if probeError}
+      <p role="alert" class="mt-1 text-[10px] text-destructive break-words" title={probeError}>
+        镜像测速失败，请点击重试
+      </p>
+    {/if}
     {#if mirrorTotal > 0}
       <ul class="mt-2 space-y-0.5">
         {#each $mirrorProbes as p (p.name)}
@@ -101,6 +111,7 @@
         {@const Icon = item.icon}
         <button
           onclick={() => navigate(item.id)}
+          aria-current={$page === item.id ? "page" : undefined}
           class="w-full flex items-center gap-2 px-3 py-2 rounded-md text-sm transition-colors {$page === item.id
             ? 'bg-accent text-accent-foreground'
             : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground'}"
@@ -131,6 +142,8 @@
       <div class="flex rounded-md bg-muted p-0.5">
         <button
           onclick={() => setTheme("light")}
+          aria-label="亮色模式"
+          aria-pressed={$theme === "light"}
           class="p-1 rounded transition-colors {$theme === 'light'
             ? 'bg-background text-foreground shadow-sm'
             : 'text-muted-foreground hover:text-foreground'}"
@@ -140,6 +153,8 @@
         </button>
         <button
           onclick={() => setTheme("system")}
+          aria-label="跟随系统主题"
+          aria-pressed={$theme === "system"}
           class="p-1 rounded transition-colors {$theme === 'system'
             ? 'bg-background text-foreground shadow-sm'
             : 'text-muted-foreground hover:text-foreground'}"
@@ -149,6 +164,8 @@
         </button>
         <button
           onclick={() => setTheme("dark")}
+          aria-label="暗色模式"
+          aria-pressed={$theme === "dark"}
           class="p-1 rounded transition-colors {$theme === 'dark'
             ? 'bg-background text-foreground shadow-sm'
             : 'text-muted-foreground hover:text-foreground'}"

@@ -5,6 +5,8 @@
 
 {#if __IS_TAURI__ && $updateState.status === "available" && !$updateState.dismissed}
   <div
+    role="status"
+    aria-live="polite"
     class="fixed bottom-4 right-4 z-50 w-72 bg-card border border-primary/40 rounded-lg shadow-lg p-3.5 space-y-2.5"
   >
     <div class="flex items-start justify-between gap-2">
@@ -14,6 +16,7 @@
       </div>
       <button
         onclick={dismiss}
+        aria-label="忽略此版本"
         class="p-0.5 text-muted-foreground hover:text-foreground transition-colors shrink-0"
         title="忽略此版本"
       >
@@ -26,7 +29,6 @@
     </div>
     <button
       onclick={() => {
-        dismiss();
         downloadAndInstall();
       }}
       class="w-full flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"

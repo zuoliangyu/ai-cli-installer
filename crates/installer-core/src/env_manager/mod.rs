@@ -1,12 +1,8 @@
 //! Cross-platform PATH manager.
 //!
-//! All write operations target the **system-wide** PATH:
-//! - Windows: `HKLM\System\CurrentControlSet\Control\Session Manager\Environment\Path`
-//!   (requires UAC elevation; we spawn an elevated PowerShell child process for the
-//!   single write, broadcast `WM_SETTINGCHANGE` so new processes pick it up).
-//! - Linux/macOS: a marker block in `/etc/profile.d/ai-cli-installer.sh` (requires sudo;
-//!   v0.0.2 falls back to writing user-level `~/.profile` because non-interactive sudo
-//!   from a Tauri GUI is fragile — system-wide deferred to v0.0.3).
+//! User PATH is the default because it works without elevation on every platform.
+//! Windows also supports explicit system-wide writes through elevated PowerShell;
+//! Linux/macOS intentionally reject system scope because GUI sudo is unreliable.
 //!
 //! Read operations don't need elevation.
 

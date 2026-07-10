@@ -23,24 +23,57 @@ import type {
 } from "../types";
 
 const API_ORIGIN = ""; // same-origin
+const ACCESS_TOKEN = (() => {
+  const url = new URL(window.location.href);
+  const fromUrl = url.searchParams.get("token");
+  if (fromUrl) {
+    try {
+      sessionStorage.setItem("installer_access_token", fromUrl);
+    } catch {
+      // The current page still keeps the in-memory token when storage is disabled.
+    }
+    url.searchParams.delete("token");
+    history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+  }
+  if (fromUrl) return fromUrl;
+  try {
+    return sessionStorage.getItem("installer_access_token");
+  } catch {
+    return null;
+  }
+})();
+
+function requestHeaders(json = false): Record<string, string> {
+  return {
+    ...(json ? { "Content-Type": "application/json" } : {}),
+    ...(ACCESS_TOKEN ? { Authorization: `Bearer ${ACCESS_TOKEN}` } : {}),
+  };
+}
+
+async function responseError(resp: Response): Promise<Error> {
+  if (resp.status === 401) {
+    return new Error("访问未授权，请使用带 ?token=访问令牌 的地址重新打开页面");
+  }
+  return new Error(await resp.text());
+}
 
 async function get<T>(path: string, query?: Record<string, string>): Promise<T> {
   const url = new URL(`${API_ORIGIN}${path}`, window.location.origin);
   if (query) {
     for (const [k, v] of Object.entries(query)) url.searchParams.set(k, v);
   }
-  const resp = await fetch(url, { method: "GET" });
-  if (!resp.ok) throw new Error(await resp.text());
+  const resp = await fetch(url, { method: "GET", headers: requestHeaders() });
+  if (!resp.ok) throw await responseError(resp);
   return resp.json() as Promise<T>;
 }
 
 async function post<T>(path: string, body?: unknown): Promise<T> {
   const resp = await fetch(`${API_ORIGIN}${path}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: requestHeaders(true),
     body: body === undefined ? undefined : JSON.stringify(body),
   });
-  if (!resp.ok) throw new Error(await resp.text());
+  if (!resp.ok) throw await responseError(resp);
   if (resp.status === 204) return undefined as T;
   return resp.json() as Promise<T>;
 }
@@ -101,6 +134,7 @@ export async function onDownloadProgress(
   // protocol from http(s) to ws(s) is the only edit we need.
   const url = new URL("/ws/progress", window.location.origin);
   url.protocol = url.protocol.replace(/^http/, "ws");
+  if (ACCESS_TOKEN) url.searchParams.set("token", ACCESS_TOKEN);
   const sock = new WebSocket(url);
   sock.addEventListener("message", (ev) => {
     try {
@@ -121,14 +155,14 @@ export async function checkPathStatus(toolId: string): Promise<PathStatus> {
 
 export async function addToPath(
   toolId: string,
-  scope: PathScope = "system"
+  scope: PathScope = "user"
 ): Promise<void> {
   await post<void>("/api/path/add", { toolId, scope });
 }
 
 export async function removeFromPath(
   toolId: string,
-  scope: PathScope = "system"
+  scope: PathScope = "user"
 ): Promise<void> {
   await post<void>("/api/path/remove", { toolId, scope });
 }

@@ -88,7 +88,7 @@ pub async fn add(dir: &Path, scope: PathScope) -> Result<()> {
             new_content.push('\n');
         }
         new_content.push_str(&block);
-        std::fs::write(&rc, new_content)
+        crate::config_file::write_with_backup(&rc, new_content)
             .map_err(|e| AppError::Other(format!("write {}: {}", rc.display(), e)))?;
     }
     Ok(())
@@ -110,7 +110,7 @@ pub async fn remove(dir: &Path, scope: PathScope) -> Result<()> {
             continue;
         }
         let new = strip_marker_block(&content);
-        std::fs::write(&rc, new)
+        crate::config_file::write_with_backup(&rc, new)
             .map_err(|e| AppError::Other(format!("write {}: {}", rc.display(), e)))?;
     }
     Ok(())
