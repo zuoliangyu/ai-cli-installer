@@ -1,14 +1,14 @@
 {
   "version": 1,
-  "updated_at": "2026-05-10",
-  "comment": "Built-in fix recipes from OCC docs (https://docs.openclaudecode.cn) and Claude Code docs (https://code.claude.com/docs/en/settings). Each fix is a list of patches that get merged into ~/.claude/settings.json or ~/.claude.json.",
+  "updated_at": "2026-07-08",
+  "comment": "Built-in fix recipes from OCC docs (https://docs.micuapi.ai) and Claude Code docs (https://code.claude.com/docs/en/settings). Each fix is a list of patches that get merged into ~/.claude/settings.json or ~/.claude.json.",
   "fixes": [
     {
       "id": "cc-006-disable-betas",
       "code": "CC-006",
       "title": "禁用实验性 Beta 参数",
-      "description": "AWS 分组上游不接受 anthropic-beta 请求头，会返回 400 invalid beta flag。开启后 Claude Code 不再附加该头。",
-      "doc_url": "https://docs.openclaudecode.cn/#/errors/cc-400-experimental-betas",
+      "description": "AWS 分组上游不接受 anthropic-beta 请求头，会返回 400 invalid beta flag。开启后 Claude Code 不再附加该头。副作用：官方直连时会失去依赖 beta 头的实验功能（如部分长上下文能力）。",
+      "doc_url": "https://docs.micuapi.ai/errors/cc-400-experimental-betas",
       "tags": ["推荐"],
       "patches": [
         {
@@ -22,8 +22,8 @@
       "id": "cc-017-skip-webfetch-preflight",
       "code": "CC-017",
       "title": "跳过 WebFetch 预检（国内网络强烈推荐）",
-      "description": "WebFetch 抓页面前会先请求 claude.ai 做域名预检；国内网络/防火墙拦掉后整个 WebFetch 失效。开启后跳过预检，直接抓目标页面。",
-      "doc_url": "https://docs.openclaudecode.cn/#/errors/cc-webfetch-preflight-fail",
+      "description": "WebFetch 抓页面前会先请求 claude.ai 做域名预检；国内网络/防火墙拦掉后整个 WebFetch 失效。开启后跳过预检，直接抓目标页面。副作用：失去官方预检对目标域名的过滤，抓取内容安全性完全取决于目标站点。",
+      "doc_url": "https://docs.micuapi.ai/errors/cc-webfetch-preflight-fail",
       "tags": ["国内网络推荐"],
       "patches": [
         {
@@ -37,8 +37,8 @@
       "id": "cc-005-onboarding-done",
       "code": "CC-005",
       "title": "标记 Onboarding 已完成（绕过首次启动连通性校验）",
-      "description": "Claude Code 首次启动会向 api.anthropic.com 做连通性校验，不受中转地址影响，国内/中转用户被卡在登录前。该字段写入 ~/.claude.json 跳过此校验。",
-      "doc_url": "https://docs.openclaudecode.cn/#/errors/cc-onboarding-connection-block",
+      "description": "Claude Code 首次启动会向 api.anthropic.com 做连通性校验，不受中转地址影响，国内/中转用户被卡在登录前。该字段写入 ~/.claude.json 跳过此校验。副作用：跳过校验后若 API 配置有误，问题会推迟到实际对话时才暴露。",
+      "doc_url": "https://docs.micuapi.ai/errors/cc-onboarding-connection-block",
       "tags": ["推荐"],
       "patches": [
         {
@@ -52,7 +52,7 @@
       "id": "enable-powershell-tool",
       "code": "CC-WIN",
       "title": "启用 PowerShell 工具",
-      "description": "允许 Claude Code 使用 PowerShell 工具。Windows + Git Bash 环境可用来主动开启原生 PowerShell；Linux/macOS/WSL 需确保 pwsh 在 PATH 中。",
+      "description": "允许 Claude Code 使用 PowerShell 工具。Windows + Git Bash 环境可用来主动开启原生 PowerShell；Linux/macOS/WSL 需确保 pwsh 在 PATH 中。副作用：若系统中没有可用的 PowerShell/pwsh，该工具调用会直接失败。",
       "doc_url": "https://code.claude.com/docs/en/env-vars",
       "tags": ["Windows", "PowerShell"],
       "patches": [
@@ -67,7 +67,7 @@
       "id": "default-shell-powershell",
       "code": "CC-WIN",
       "title": "将 ! 命令默认改为 PowerShell",
-      "description": "把输入框里的 ! 命令默认交给 PowerShell 执行。适合主要使用 PowerShell 的 Windows 用户；如未启用 PowerShell 工具，请先单独应用对应配置。",
+      "description": "把输入框里的 ! 命令默认交给 PowerShell 执行。适合主要使用 PowerShell 的 Windows 用户；如未启用 PowerShell 工具，请先单独应用对应配置。副作用：习惯 bash 语法的 ! 命令（如 export、&& 链式写法差异）会因语法不同而报错。",
       "doc_url": "https://code.claude.com/docs/en/settings",
       "tags": ["Windows", "PowerShell"],
       "patches": [
@@ -82,7 +82,7 @@
       "id": "maintain-project-working-dir",
       "code": "CC-SHELL",
       "title": "命令执行后回到项目目录",
-      "description": "让 Claude Code 的 Bash 或 PowerShell 命令执行后回到会话最初的工作目录，减少 cd 到子目录后影响后续命令的情况。",
+      "description": "让 Claude Code 的 Bash 或 PowerShell 命令执行后回到会话最初的工作目录，减少 cd 到子目录后影响后续命令的情况。副作用：依赖「cd 后停留在子目录」的多步操作需要改用绝对路径或单条命令内完成。",
       "doc_url": "https://code.claude.com/docs/en/env-vars",
       "tags": [],
       "patches": [
@@ -97,7 +97,7 @@
       "id": "disable-bypass-permissions-mode",
       "code": "CC-SAFE",
       "title": "禁用跳过权限模式",
-      "description": "阻止 Claude Code 启用 bypassPermissions 模式，同时禁用 --dangerously-skip-permissions，降低误进入高风险权限模式的可能。",
+      "description": "阻止 Claude Code 启用 bypassPermissions 模式，同时禁用 --dangerously-skip-permissions，降低误进入高风险权限模式的可能。副作用：CI、容器等需要完全无人值守自动化的场景将无法再跳过权限确认。",
       "doc_url": "https://code.claude.com/docs/en/settings",
       "tags": ["推荐", "安全"],
       "patches": [
@@ -112,7 +112,7 @@
       "id": "scrub-subprocess-env",
       "code": "CC-SAFE",
       "title": "子进程环境变量脱敏",
-      "description": "从 Bash、PowerShell、hooks、MCP stdio 子进程环境中剥离 Anthropic 和云厂商凭据，降低命令执行时泄露密钥的风险。Linux 上会启用额外进程隔离。",
+      "description": "从 Bash、PowerShell、hooks、MCP stdio 子进程环境中剥离 Anthropic 和云厂商凭据，降低命令执行时泄露密钥的风险。Linux 上会启用额外进程隔离。副作用：本身依赖 ANTHROPIC_API_KEY 等凭据的脚本、hooks 或 MCP 子进程会因拿不到变量而失败。",
       "doc_url": "https://code.claude.com/docs/en/env-vars",
       "tags": ["推荐", "安全"],
       "patches": [
@@ -126,8 +126,8 @@
     {
       "id": "disable-nonessential-traffic",
       "code": "CC-NET",
-      "title": "关闭非必要外联",
-      "description": "一次性关闭自动更新、反馈命令、错误上报和遥测，适合对离线、隐私或网络稳定性要求更高的环境。",
+      "title": "关闭非必要外联（注意副作用）",
+      "description": "一键开关，等效于同时关闭自动更新、/bug 反馈、错误上报和遥测，适合离线或网络受控环境。副作用：会一并失去安全更新推送；且遥测被关后特性门控评估也可能停用，导致 1M 上下文等灰度功能被静默关闭。注意它并不能减少计费的小模型请求——想省 token 请改用「禁用非必要模型调用」。",
       "doc_url": "https://code.claude.com/docs/en/env-vars",
       "tags": ["安全", "网络"],
       "patches": [
@@ -139,10 +139,25 @@
       ]
     },
     {
+      "id": "disable-non-essential-model-calls",
+      "code": "CC-COMMON",
+      "title": "禁用非必要模型调用（省 token）",
+      "description": "关闭会话标题自动生成、装饰性提示文案等非关键路径的小模型（Haiku）调用。社区反映的「不断出现极小 token 数的计费请求」多为此类调用，这条才是对应的开关（「关闭非必要外联」管不到它们）。副作用：会话标题不再自动生成、界面少部分提示文案；核心对话与工具能力不受影响。",
+      "doc_url": "https://code.claude.com/docs/en/env-vars",
+      "tags": ["推荐", "隐私"],
+      "patches": [
+        {
+          "target": "claude_settings",
+          "path": "env.DISABLE_NON_ESSENTIAL_MODEL_CALLS",
+          "value": "1"
+        }
+      ]
+    },
+    {
       "id": "disable-auto-updater",
       "code": "CC-NET",
       "title": "关闭后台自动更新",
-      "description": "禁用 Claude Code 后台自动更新，保留手动 claude update 能力。适合希望由安装器或包管理器统一管理版本的环境。",
+      "description": "禁用 Claude Code 后台自动更新，保留手动 claude update 能力。适合希望由安装器或包管理器统一管理版本的环境。副作用：无法自动获得安全修复和 bug 修复，需要定期手动执行 claude update。",
       "doc_url": "https://code.claude.com/docs/en/env-vars",
       "tags": ["网络"],
       "patches": [
@@ -157,7 +172,7 @@
       "id": "disable-alternate-screen",
       "code": "CC-TUI",
       "title": "使用终端原生滚动区",
-      "description": "关闭 Claude Code 全屏 alternate screen 渲染，回到终端主屏幕滚动区，便于复制、搜索和排查渲染异常。",
+      "description": "关闭 Claude Code 全屏 alternate screen 渲染，回到终端主屏幕滚动区，便于复制、搜索和排查渲染异常。副作用：历史输出会不断堆积在终端滚动区，长会话下画面较乱。",
       "doc_url": "https://code.claude.com/docs/en/env-vars",
       "tags": ["终端"],
       "patches": [
@@ -172,7 +187,7 @@
       "id": "hide-startup-cwd",
       "code": "CC-PRIVACY",
       "title": "隐藏启动页工作目录",
-      "description": "隐藏 Claude Code 启动页中的当前工作目录，适合录屏、直播或截图时避免暴露用户名和本地路径。",
+      "description": "隐藏 Claude Code 启动页中的当前工作目录，适合录屏、直播或截图时避免暴露用户名和本地路径。副作用：启动时无法一眼确认当前在哪个项目目录，跑错目录不易察觉。",
       "doc_url": "https://code.claude.com/docs/en/env-vars",
       "tags": ["隐私"],
       "patches": [
@@ -187,7 +202,7 @@
       "id": "increase-api-timeout",
       "code": "CC-NET",
       "title": "延长 API 请求超时",
-      "description": "把 Claude Code 的 API 请求超时延长到 20 分钟，适合中转、弱网或长思考请求经常超时的环境。",
+      "description": "把 Claude Code 的 API 请求超时延长到 20 分钟，适合中转、弱网或长思考请求经常超时的环境。副作用：上游真正无响应时也要等满超时才报错，失败反馈变慢。",
       "doc_url": "https://code.claude.com/docs/en/env-vars",
       "tags": ["网络"],
       "patches": [
@@ -199,10 +214,30 @@
       ]
     },
     {
+      "id": "increase-bash-timeout",
+      "code": "CC-SHELL",
+      "title": "延长命令执行超时",
+      "description": "把 Bash/PowerShell 命令的默认超时提高到 5 分钟、可用上限提高到 20 分钟，避免大型构建或测试（如 cargo build、完整测试套件）跑到一半被默认 2 分钟超时强制中止。副作用：真正卡死的命令也要等更久才会被终止，期间会话处于等待状态。",
+      "doc_url": "https://code.claude.com/docs/en/env-vars",
+      "tags": ["终端"],
+      "patches": [
+        {
+          "target": "claude_settings",
+          "path": "env.BASH_DEFAULT_TIMEOUT_MS",
+          "value": "300000"
+        },
+        {
+          "target": "claude_settings",
+          "path": "env.BASH_MAX_TIMEOUT_MS",
+          "value": "1200000"
+        }
+      ]
+    },
+    {
       "id": "increase-mcp-connect-timeout",
       "code": "CC-MCP",
       "title": "延长 MCP 首轮连接等待",
-      "description": "延长首轮 MCP 连接等待时间，适合远程 MCP 网络抖动或首轮查询拿不到 MCP 工具的场景。",
+      "description": "延长首轮 MCP 连接等待时间，适合远程 MCP 网络抖动或首轮查询拿不到 MCP 工具的场景。副作用：已失联的 MCP server 会拖慢启动和首轮响应。",
       "doc_url": "https://code.claude.com/docs/en/env-vars",
       "tags": ["MCP"],
       "patches": [
@@ -217,7 +252,7 @@
       "id": "increase-mcp-startup-timeout",
       "code": "CC-MCP",
       "title": "延长 MCP server 启动超时",
-      "description": "延长单个 MCP server 启动超时，适合本地 MCP 冷启动慢或启动时需要初始化模型、数据库连接的场景。",
+      "description": "延长单个 MCP server 启动超时，适合本地 MCP 冷启动慢或启动时需要初始化模型、数据库连接的场景。副作用：配置错误、永远起不来的 MCP server 要等更久才报启动失败。",
       "doc_url": "https://code.claude.com/docs/en/env-vars",
       "tags": ["MCP"],
       "patches": [
@@ -232,7 +267,7 @@
       "id": "increase-mcp-output-limit",
       "code": "CC-MCP",
       "title": "提高 MCP 输出上限",
-      "description": "把 MCP 工具响应上限提高到 50000 tokens，减少大结果被截断。适合数据库、文档检索等返回内容较多的 MCP 工具。",
+      "description": "把 MCP 工具响应上限提高到 50000 tokens，减少大结果被截断。适合数据库、文档检索等返回内容较多的 MCP 工具。副作用：超大结果会占用更多上下文窗口，挤占对话可用空间并增加 token 消耗。",
       "doc_url": "https://code.claude.com/docs/en/env-vars",
       "tags": ["MCP"],
       "patches": [
@@ -247,7 +282,7 @@
       "id": "respect-gitignore-in-glob",
       "code": "CC-PRIVACY",
       "title": "Glob 搜索遵守 .gitignore",
-      "description": "让 Claude Code 的 Glob 搜索遵守 .gitignore，减少命中依赖缓存、构建产物或本地私有文件。",
+      "description": "让 Claude Code 的 Glob 搜索遵守 .gitignore，减少命中依赖缓存、构建产物或本地私有文件。副作用：被 .gitignore 忽略但确实需要检索的文件（如本地配置、生成代码）将搜不到。",
       "doc_url": "https://code.claude.com/docs/en/env-vars",
       "tags": ["隐私", "搜索"],
       "patches": [
@@ -262,7 +297,7 @@
       "id": "native-file-search",
       "code": "CC-SHELL",
       "title": "使用系统原生文件搜索",
-      "description": "让 Claude Code 使用系统原生命令做文件搜索。适合内置 ripgrep 不可用、被安全软件拦截或在特殊终端环境下行为异常的情况。",
+      "description": "让 Claude Code 使用系统原生命令做文件搜索。适合内置 ripgrep 不可用、被安全软件拦截或在特殊终端环境下行为异常的情况。副作用：搜索行为依赖系统命令，结果和性能在不同系统上可能与内置实现有差异。",
       "doc_url": "https://code.claude.com/docs/en/env-vars",
       "tags": ["搜索"],
       "patches": [
@@ -277,7 +312,7 @@
       "id": "use-system-ripgrep",
       "code": "CC-SHELL",
       "title": "Grep 使用系统 ripgrep",
-      "description": "关闭内置 ripgrep，改用系统 PATH 中的 rg。适合内置二进制被安全软件拦截、企业终端限制或系统已维护统一 rg 版本的环境。",
+      "description": "关闭内置 ripgrep，改用系统 PATH 中的 rg。适合内置二进制被安全软件拦截、企业终端限制或系统已维护统一 rg 版本的环境。副作用：系统 PATH 中没有 rg 时，内容搜索（Grep）将不可用。",
       "doc_url": "https://code.claude.com/docs/en/env-vars",
       "tags": ["搜索"],
       "patches": [
@@ -292,7 +327,7 @@
       "id": "disable-nonstreaming-fallback",
       "code": "CC-NET",
       "title": "禁用非流式降级重试",
-      "description": "禁用 API 流式请求失败后的非流式降级。适合部分代理在流式中断时可能重复执行工具调用的场景。",
+      "description": "禁用 API 流式请求失败后的非流式降级。适合部分代理在流式中断时可能重复执行工具调用的场景。副作用：流式请求失败后不再自动兜底重试，弱网环境下直接报错的次数会变多。",
       "doc_url": "https://code.claude.com/docs/en/env-vars",
       "tags": ["安全", "网络"],
       "patches": [
@@ -307,7 +342,7 @@
       "id": "disable-remote-control",
       "code": "CC-SAFE",
       "title": "禁用远程控制",
-      "description": "禁用 Claude Code 远程控制能力，适合更严格的本机交互或受控办公环境。",
+      "description": "禁用 Claude Code 远程控制能力，适合更严格的本机交互或受控办公环境。副作用：无法再从手机或网页端远程接管本机会话（/remote-control 不可用）。",
       "doc_url": "https://code.claude.com/docs/en/settings",
       "tags": ["安全"],
       "patches": [
@@ -322,7 +357,7 @@
       "id": "disable-skill-shell-execution",
       "code": "CC-SAFE",
       "title": "禁用 Skill Shell 执行",
-      "description": "阻止技能里的 Bash、PowerShell、Python 等可执行代码块自动运行，适合安全边界更严格或需要手动审查技能内容的场景。",
+      "description": "阻止技能里的 Bash、PowerShell、Python 等可执行代码块自动运行，适合安全边界更严格或需要手动审查技能内容的场景。副作用：依赖脚本的技能会功能退化甚至不可用，其中的命令需要人工确认执行。",
       "doc_url": "https://code.claude.com/docs/en/settings",
       "tags": ["安全"],
       "patches": [
@@ -337,7 +372,7 @@
       "id": "disable-deep-link-registration",
       "code": "CC-SAFE",
       "title": "禁用 claude:// 深链注册",
-      "description": "禁用 claude:// 深链注册，适合不希望浏览器或其它应用唤起 Claude Code 的受控环境。",
+      "description": "禁用 claude:// 深链注册，适合不希望浏览器或其它应用唤起 Claude Code 的受控环境。副作用：浏览器等外部程序里的 claude:// 链接将无法唤起本机 Claude Code。",
       "doc_url": "https://code.claude.com/docs/en/settings",
       "tags": ["安全"],
       "patches": [
@@ -352,7 +387,7 @@
       "id": "disable-auto-memory",
       "code": "CC-PRIVACY",
       "title": "关闭自动记忆",
-      "description": "关闭 Claude Code 的自动记忆功能，适合不希望会话内容自动写入或更新记忆文件的环境。",
+      "description": "关闭 Claude Code 的自动记忆功能，适合不希望会话内容自动写入或更新记忆文件的环境。副作用：跨会话不再自动积累偏好和项目经验，需要手动维护 CLAUDE.md 等文件。",
       "doc_url": "https://code.claude.com/docs/en/settings",
       "tags": ["隐私"],
       "patches": [
@@ -367,7 +402,7 @@
       "id": "disable-attachments-expansion",
       "code": "CC-PRIVACY",
       "title": "禁用 @ 附件自动展开",
-      "description": "禁用 @ 文件附件自动展开，适合避免误把本地文件内容带入上下文，或排查附件解析导致的卡顿。",
+      "description": "禁用 @ 文件附件自动展开，适合避免误把本地文件内容带入上下文，或排查附件解析导致的卡顿。副作用：@ 引用文件后模型看不到文件内容，需要它再主动读取，多一步交互。",
       "doc_url": "https://code.claude.com/docs/en/env-vars",
       "tags": ["隐私"],
       "patches": [
@@ -382,7 +417,7 @@
       "id": "disable-terminal-mouse",
       "code": "CC-TUI",
       "title": "禁用终端鼠标捕获",
-      "description": "禁用 Claude Code 的鼠标捕获，适合终端选择、滚动或复制文本被 TUI 接管时排查。",
+      "description": "禁用 Claude Code 的鼠标捕获，适合终端选择、滚动或复制文本被 TUI 接管时排查。副作用：无法再用鼠标点击界面元素或在 TUI 内部列表中滚动，只能用键盘操作。",
       "doc_url": "https://code.claude.com/docs/en/env-vars",
       "tags": ["终端"],
       "patches": [
@@ -394,10 +429,25 @@
       ]
     },
     {
+      "id": "disable-terminal-title",
+      "code": "CC-TUI",
+      "title": "禁止自动更新终端标题",
+      "description": "禁止 Claude Code 根据会话内容自动改写终端窗口标题。标题文案由小模型生成，也是计费小请求的来源之一，同时录屏时标题可能暴露会话内容。副作用：终端标题不再显示会话摘要，多窗口并行时需要自行分辨哪个窗口是哪个会话。",
+      "doc_url": "https://code.claude.com/docs/en/env-vars",
+      "tags": ["终端", "隐私"],
+      "patches": [
+        {
+          "target": "claude_settings",
+          "path": "env.CLAUDE_CODE_DISABLE_TERMINAL_TITLE",
+          "value": "1"
+        }
+      ]
+    },
+    {
       "id": "native-cursor",
       "code": "CC-TUI",
       "title": "使用终端原生光标",
-      "description": "使用终端原生光标，适合光标位置显示异常、远程终端或特殊终端模拟器兼容性排查。",
+      "description": "使用终端原生光标，适合光标位置显示异常、远程终端或特殊终端模拟器兼容性排查。副作用：个别界面场景下光标样式与 TUI 渲染不完全同步，观感略有差异。",
       "doc_url": "https://code.claude.com/docs/en/env-vars",
       "tags": ["终端"],
       "patches": [
@@ -412,7 +462,7 @@
       "id": "disable-virtual-scroll",
       "code": "CC-TUI",
       "title": "禁用虚拟滚动",
-      "description": "禁用 Claude Code 的虚拟滚动，适合某些终端里滚动、历史缓冲或内容定位显示异常时排查。",
+      "description": "禁用 Claude Code 的虚拟滚动，适合某些终端里滚动、历史缓冲或内容定位显示异常时排查。副作用：超长输出时渲染性能可能下降，界面响应变慢。",
       "doc_url": "https://code.claude.com/docs/en/env-vars",
       "tags": ["终端"],
       "patches": [
@@ -427,7 +477,7 @@
       "id": "disable-syntax-highlighting",
       "code": "CC-TUI",
       "title": "禁用语法高亮",
-      "description": "关闭代码语法高亮，适合低对比度主题、特殊终端配色或渲染性能问题排查。",
+      "description": "关闭代码语法高亮，适合低对比度主题、特殊终端配色或渲染性能问题排查。副作用：代码块显示为纯文本，阅读长代码时可读性下降。",
       "doc_url": "https://code.claude.com/docs/en/env-vars",
       "tags": ["终端"],
       "patches": [
@@ -442,7 +492,7 @@
       "id": "accessibility-mode",
       "code": "CC-TUI",
       "title": "启用无障碍输出模式",
-      "description": "启用面向屏幕阅读器等辅助技术的输出模式，适合无障碍使用或排查复杂 TUI 渲染问题。",
+      "description": "启用面向屏幕阅读器等辅助技术的输出模式，适合无障碍使用或排查复杂 TUI 渲染问题。副作用：界面转为线性文本输出，视觉排版与常规 TUI 差别较大。",
       "doc_url": "https://code.claude.com/docs/en/env-vars",
       "tags": ["终端"],
       "patches": [
@@ -457,8 +507,8 @@
       "id": "disable-telemetry",
       "code": "CC-COMMON",
       "title": "关闭遥测（隐私）",
-      "description": "禁用 Claude Code 向 anthropic 发送匿名使用统计数据。",
-      "doc_url": null,
+      "description": "禁用 Claude Code 向 Anthropic 发送匿名使用统计数据（Statsig 遥测，纯 HTTP 请求，本身不消耗 token）。副作用：社区反馈遥测与特性门控共用开关，关闭后部分灰度新功能（如 1M 上下文）的评估可能一并停用。",
+      "doc_url": "https://code.claude.com/docs/en/env-vars",
       "tags": ["隐私"],
       "patches": [
         {
@@ -472,8 +522,8 @@
       "id": "disable-error-reporting",
       "code": "CC-COMMON",
       "title": "关闭错误上报（隐私）",
-      "description": "禁用 Claude Code 错误上报，适合对日志、异常信息和网络外联更敏感的环境。",
-      "doc_url": null,
+      "description": "禁用 Claude Code 向 Sentry 自动上报错误信息，适合对日志、异常信息和网络外联更敏感的环境。副作用：崩溃诊断不再上报，官方更难据此定位你遇到的问题；无其他功能损失。",
+      "doc_url": "https://code.claude.com/docs/en/env-vars",
       "tags": ["隐私"],
       "patches": [
         {
@@ -484,10 +534,55 @@
       ]
     },
     {
+      "id": "disable-feedback-survey",
+      "code": "CC-PRIVACY",
+      "title": "关闭会话质量调查弹窗",
+      "description": "关闭「Claude 表现如何？」会话质量调查（默认按小比例采样随机弹出）。副作用：仅不再收到调查弹窗，无功能损失。",
+      "doc_url": "https://code.claude.com/docs/en/env-vars",
+      "tags": ["隐私"],
+      "patches": [
+        {
+          "target": "claude_settings",
+          "path": "env.CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY",
+          "value": "1"
+        }
+      ]
+    },
+    {
+      "id": "disable-bug-command",
+      "code": "CC-PRIVACY",
+      "title": "禁用 /bug 反馈命令",
+      "description": "禁用 /bug 命令，该命令会把会话相关信息作为错误报告发送给 Anthropic。副作用：无法再通过 /bug 一键反馈问题，需改用 GitHub issue 等渠道。",
+      "doc_url": "https://code.claude.com/docs/en/env-vars",
+      "tags": ["隐私"],
+      "patches": [
+        {
+          "target": "claude_settings",
+          "path": "env.DISABLE_BUG_COMMAND",
+          "value": "1"
+        }
+      ]
+    },
+    {
+      "id": "do-not-track",
+      "code": "CC-PRIVACY",
+      "title": "设置 DO_NOT_TRACK 通用信号",
+      "description": "设置行业通用的「请勿跟踪」标准环境变量，Claude Code 会据此减少数据收集。副作用：该变量会传递给 Claude Code 启动的子进程，其它遵守该约定的工具（如 Next.js、Homebrew CLI 统计）也会随之停用统计。",
+      "doc_url": "https://code.claude.com/docs/en/env-vars",
+      "tags": ["隐私"],
+      "patches": [
+        {
+          "target": "claude_settings",
+          "path": "env.DO_NOT_TRACK",
+          "value": "1"
+        }
+      ]
+    },
+    {
       "id": "include-coauthor-off",
       "code": "CC-COMMON",
       "title": "提交时不附加 Co-Authored-By 标记",
-      "description": "Claude Code 默认在 git commit 里加 \"Co-Authored-By: Claude\" 行；这条关掉它，提交记录看起来就跟你自己写的一样。",
+      "description": "Claude Code 默认在 git commit 里加 \"Co-Authored-By: Claude\" 行；这条关掉它，提交记录看起来就跟你自己写的一样。副作用：提交记录不再体现 AI 参与，若团队要求标注 AI 生成内容需自行注意合规。",
       "doc_url": null,
       "tags": ["隐私"],
       "patches": [

@@ -211,7 +211,7 @@
       勾选后点击「应用」会把对应字段写入对应配置文件，<strong class="text-foreground">保留</strong>已有内容。
       内容来源：<button
         class="text-primary hover:underline"
-        onclick={() => openDoc('https://docs.openclaudecode.cn')}
+        onclick={() => openDoc('https://docs.micuapi.ai')}
       >OCC 配置文档</button>。
     </p>
   </header>
