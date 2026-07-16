@@ -8,7 +8,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 
 use crate::env_manager::{self, PathScope, PathStatus};
 use crate::error::{AppError, Result};
@@ -25,6 +25,7 @@ use crate::version_cache;
 pub struct AppState {
     pub client: reqwest::Client,
     pub mirrors: RwLock<MirrorList>,
+    tool_operations: Mutex<()>,
 }
 
 impl AppState {
@@ -37,6 +38,7 @@ impl AppState {
         Self {
             client,
             mirrors: RwLock::new(MirrorList::builtin()),
+            tool_operations: Mutex::new(()),
         }
     }
 }
@@ -54,6 +56,8 @@ impl Default for AppState {
 // the two shells share a single source of truth for behavior.
 
 pub async fn list_tools(state: &AppState) -> Result<Vec<ToolDescriptor>> {
+    // ponytail: global lock; split download/deploy phases if parallel installs matter.
+    let _operation = state.tool_operations.lock().await;
     let cc = ClaudeCode;
     let mut cd = cc.descriptor();
 
@@ -147,6 +151,7 @@ pub async fn install_tool(
     method: Option<InstallMethod>,
     mirror: Option<String>,
 ) -> Result<InstallReport> {
+    let _operation = state.tool_operations.lock().await;
     let requested_channel = channel.unwrap_or_else(|| "latest".to_string());
     let method = method.unwrap_or_default();
     let client = state.client.clone();
