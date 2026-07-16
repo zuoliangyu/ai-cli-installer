@@ -16,7 +16,6 @@ sha2 = "0.10"
 hex = "0.4"
 dirs = "5"
 tracing = "0.1"
-rusqlite = { version = "0.31", features = ["bundled"] }
 zstd = "0.13"
 
 [target.'cfg(windows)'.dependencies]

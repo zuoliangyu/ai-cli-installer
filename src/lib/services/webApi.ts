@@ -13,8 +13,6 @@ import type {
   Channel,
   PathStatus,
   PathScope,
-  ClaudePreset,
-  ClaudeSettingsEnv,
   NodeInfo,
   Fix,
   ApplyFixReport,
@@ -165,21 +163,6 @@ export async function removeFromPath(
   scope: PathScope = "user"
 ): Promise<void> {
   await post<void>("/api/path/remove", { toolId, scope });
-}
-
-export async function listClaudePresets(): Promise<ClaudePreset[]> {
-  return get<ClaudePreset[]>("/api/presets");
-}
-
-export async function getClaudeSettings(): Promise<ClaudeSettingsEnv> {
-  return get<ClaudeSettingsEnv>("/api/presets/current");
-}
-
-export async function applyClaudePreset(
-  baseUrl: string,
-  authToken: string
-): Promise<void> {
-  await post<void>("/api/presets/apply", { baseUrl, authToken });
 }
 
 export async function getLogs(): Promise<string[]> {

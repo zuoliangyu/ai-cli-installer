@@ -10,7 +10,6 @@ use installer_core::env_manager::{PathScope, PathStatus};
 use installer_core::fixes::{ApplyReport, Fix, RemoveReport};
 use installer_core::mirrors::{MirrorList, MirrorProbe};
 use installer_core::npm_installer::NodeInfo;
-use installer_core::presets::{ClaudePreset, ClaudeSettingsEnv};
 use installer_core::progress::{DownloadProgress, ProgressCallback};
 use installer_core::tools::{InstallMethod, InstallReport, ToolDescriptor};
 use installer_core::{app_state, AppState, Result};
@@ -97,21 +96,6 @@ pub async fn add_to_path(tool_id: String, scope: Option<PathScope>) -> Result<()
 #[tauri::command]
 pub async fn remove_from_path(tool_id: String, scope: Option<PathScope>) -> Result<()> {
     app_state::remove_from_path(&tool_id, scope.unwrap_or(PathScope::User)).await
-}
-
-#[tauri::command]
-pub async fn list_claude_presets() -> Result<Vec<ClaudePreset>> {
-    Ok(app_state::list_claude_presets())
-}
-
-#[tauri::command]
-pub async fn get_claude_settings() -> Result<ClaudeSettingsEnv> {
-    app_state::get_claude_settings()
-}
-
-#[tauri::command]
-pub async fn apply_claude_preset(base_url: String, auth_token: String) -> Result<()> {
-    app_state::apply_claude_preset(&base_url, &auth_token)
 }
 
 #[tauri::command]

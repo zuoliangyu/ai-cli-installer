@@ -1,7 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import ToolCard from "./lib/components/ToolCard.svelte";
-  import PresetSection from "./lib/components/PresetSection.svelte";
   import FixesSection from "./lib/components/FixesSection.svelte";
   import About from "./lib/components/About.svelte";
   import LogViewer from "./lib/components/LogViewer.svelte";
@@ -40,7 +39,6 @@
 
   const titles: Record<Page, string> = {
     tools: "CLI 工具",
-    presets: "中转预设",
     fixes: "配置修复",
     about: "关于",
     logs: "查看日志",
@@ -77,8 +75,6 @@
               </div>
             {/if}
           </section>
-        {:else if $page === "presets"}
-          <PresetSection />
         {:else if $page === "about"}
           <About />
         {:else if $page === "logs"}

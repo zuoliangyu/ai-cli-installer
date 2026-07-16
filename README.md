@@ -2,7 +2,7 @@
 
 为 Claude Code / Codex CLI 提供镜像加速下载与一键安装的桌面应用，同时也能作为本地 / 远程 Web 服务运行。Tauri + Svelte 5 + Rust。
 
-当前版本：**v0.5.1**
+当前版本：**v0.5.2**
 
 > Claude Code 走「镜像加速」时，若官方 bootstrap 的自我安装（`claude install`）因为回连 `downloads.claude.ai` 失败（国内网络常见），会自动 fallback 到直接把已校验的二进制部署到 `~/.local/bin/claude.exe`——保证装得上。
 
@@ -64,7 +64,6 @@ crates/
       platform.rs             OS / arch / Linux musl 检测
       upstream.rs             /latest /stable /manifest.json 抓取
       fixes.rs                配置补丁（远程 fixes.json + 本地 embedded）
-      presets.rs              Claude 中转站预设 + cc-switch 同步
       install_diagnostics.rs  多源安装诊断
       env_manager/            跨平台 PATH 管理
       tools/                  Tool trait + Claude Code / Codex 实现
@@ -137,7 +136,7 @@ npm run web
 
 > 注意：Web 模式改的是**运行 installer-web 的那台机器**的环境（`~/.local/bin`、PATH、`~/.claude/settings.json`）。容器化对该应用没有意义，因此不提供 Docker 镜像。
 
-配置修复、中转预设和 Unix PATH 写入前会保留递增备份：首次为 `.bak`，后续为 `.bak.1`、`.bak.2` 等。同名配置字段会覆盖，其他字段保持不变。
+配置修复和 Unix PATH 写入前会保留递增备份：首次为 `.bak`，后续为 `.bak.1`、`.bak.2` 等。同名配置字段会覆盖，其他字段保持不变。
 
 ## 构建
 

@@ -156,31 +156,6 @@ pub async fn remove_from_path(Json(body): Json<PathBody>) -> impl IntoResponse {
     }
 }
 
-pub async fn list_claude_presets() -> impl IntoResponse {
-    Json(app_state::list_claude_presets())
-}
-
-pub async fn get_claude_settings() -> impl IntoResponse {
-    match app_state::get_claude_settings() {
-        Ok(v) => Json(v).into_response(),
-        Err(e) => err(e).into_response(),
-    }
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ApplyPresetBody {
-    pub base_url: String,
-    pub auth_token: String,
-}
-
-pub async fn apply_claude_preset(Json(body): Json<ApplyPresetBody>) -> impl IntoResponse {
-    match app_state::apply_claude_preset(&body.base_url, &body.auth_token) {
-        Ok(()) => StatusCode::NO_CONTENT.into_response(),
-        Err(e) => err(e).into_response(),
-    }
-}
-
 #[derive(Deserialize)]
 pub struct OpenPathBody {
     pub path: String,

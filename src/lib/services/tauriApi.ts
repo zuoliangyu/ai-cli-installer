@@ -14,8 +14,6 @@ import type {
   Channel,
   PathStatus,
   PathScope,
-  ClaudePreset,
-  ClaudeSettingsEnv,
   NodeInfo,
   Fix,
   ApplyFixReport,
@@ -95,21 +93,6 @@ export async function removeFromPath(
   scope: PathScope = "user"
 ): Promise<void> {
   await invoke<void>("remove_from_path", { toolId, scope });
-}
-
-export async function listClaudePresets(): Promise<ClaudePreset[]> {
-  return invoke<ClaudePreset[]>("list_claude_presets");
-}
-
-export async function getClaudeSettings(): Promise<ClaudeSettingsEnv> {
-  return invoke<ClaudeSettingsEnv>("get_claude_settings");
-}
-
-export async function applyClaudePreset(
-  baseUrl: string,
-  authToken: string
-): Promise<void> {
-  await invoke<void>("apply_claude_preset", { baseUrl, authToken });
 }
 
 export async function getLogs(): Promise<string[]> {

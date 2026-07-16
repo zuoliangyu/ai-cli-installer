@@ -3,7 +3,7 @@
 //! This crate contains everything that is independent of the runtime shell
 //! (Tauri desktop or Axum web server): mirror chain, downloader, verifier,
 //! tool specs (Claude Code / Codex), npm-route installer, fixes recipes,
-//! claude presets, env-manager, install diagnostics. Both `src-tauri` and
+//! env-manager, install diagnostics. Both `src-tauri` and
 //! `installer-web` consume this crate.
 //!
 //! Progress events are abstracted through [`progress::ProgressCallback`] so
@@ -21,7 +21,6 @@ pub mod installer;
 pub mod mirrors;
 pub mod npm_installer;
 pub mod platform;
-pub mod presets;
 pub mod proc;
 pub mod progress;
 pub mod tools;

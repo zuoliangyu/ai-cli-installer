@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Wrench, Plug, Bandage, Info, Sun, Moon, Monitor, RefreshCw, ScrollText } from "lucide-svelte";
+  import { Wrench, Bandage, Info, Sun, Moon, Monitor, RefreshCw, ScrollText } from "lucide-svelte";
   import { page, navigate, type Page } from "../page";
   import { theme, setTheme } from "../theme";
   import { mirrorProbes } from "../stores";
@@ -31,7 +31,6 @@
   type NavItem = { id: Page; label: string; icon: typeof Wrench };
   const baseItems: NavItem[] = [
     { id: "tools", label: "CLI 工具", icon: Wrench },
-    { id: "presets", label: "中转预设", icon: Plug },
     { id: "fixes", label: "配置修复", icon: Bandage },
   ];
   const devItems: NavItem[] = [

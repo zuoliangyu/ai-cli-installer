@@ -113,19 +113,3 @@ export interface PathStatus {
 export type PathScope = "system" | "user";
 
 export type UnlistenFn = () => void;
-
-export type PresetSource = "builtin" | "cc_switch";
-
-export interface ClaudePreset {
-  id: string;
-  name: string;
-  base_url: string;
-  website_url: string | null;
-  api_key_url: string | null;
-  source: PresetSource;
-}
-
-export interface ClaudeSettingsEnv {
-  anthropic_base_url: string | null;
-  anthropic_auth_token: string | null;
-}

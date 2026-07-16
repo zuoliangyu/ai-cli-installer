@@ -31,7 +31,4 @@ export const onDownloadProgress = bind("onDownloadProgress");
 export const checkPathStatus = bind("checkPathStatus");
 export const addToPath = bind("addToPath");
 export const removeFromPath = bind("removeFromPath");
-export const listClaudePresets = bind("listClaudePresets");
-export const getClaudeSettings = bind("getClaudeSettings");
-export const applyClaudePreset = bind("applyClaudePreset");
 export const getLogs = bind("getLogs");

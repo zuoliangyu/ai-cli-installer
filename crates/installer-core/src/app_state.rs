@@ -16,7 +16,6 @@ use crate::fixes::{self, ApplyReport, Fix, RemoveReport};
 use crate::install_diagnostics;
 use crate::mirrors::{self, MirrorList, MirrorProbe};
 use crate::npm_installer::{self, NodeInfo};
-use crate::presets::{self, ClaudePreset, ClaudeSettingsEnv};
 use crate::progress::ProgressCallback;
 use crate::tools::{
     claude_code::ClaudeCode, codex::CodexCli, InstallMethod, InstallReport, Tool, ToolDescriptor,
@@ -218,18 +217,6 @@ pub async fn add_to_path(tool_id: &str, scope: PathScope) -> Result<()> {
 pub async fn remove_from_path(tool_id: &str, scope: PathScope) -> Result<()> {
     let dir = launcher_dir_for(tool_id)?;
     env_manager::remove(&dir, scope).await
-}
-
-pub fn list_claude_presets() -> Vec<ClaudePreset> {
-    presets::list_all_presets()
-}
-
-pub fn get_claude_settings() -> Result<ClaudeSettingsEnv> {
-    presets::read_current_env()
-}
-
-pub fn apply_claude_preset(base_url: &str, auth_token: &str) -> Result<()> {
-    presets::apply_env(base_url, auth_token)
 }
 
 /// Open a JSON config file with the system's default associated app.
