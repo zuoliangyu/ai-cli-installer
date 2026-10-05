@@ -133,7 +133,9 @@
 
     {#if $updateState.status === "error"}
       <div class="rounded-md border border-destructive/30 bg-destructive/5 p-2.5 space-y-1.5">
-        <div class="text-xs font-medium text-destructive">更新检查失败</div>
+        <div class="text-xs font-medium text-destructive">
+          {$updateState.errorKind === "install" ? "更新下载或安装失败" : "更新检查失败"}
+        </div>
         {#if $updateState.errorMessage}
           <div
             class="text-[11px] text-muted-foreground break-all line-clamp-2 font-mono"
@@ -146,7 +148,7 @@
             onclick={() => checkForUpdate()}
             class="text-xs text-primary hover:underline"
           >
-            重试
+            {$updateState.errorKind === "install" ? "重新检查更新" : "重试"}
           </button>
           <button
             onclick={() => openDownloadPage()}

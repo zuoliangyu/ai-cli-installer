@@ -1,22 +1,20 @@
-//! Web-mode API. Hits the Axum HTTP routes exposed by `installer-web` and
-//! subscribes to download progress through `/ws/progress`. Function shapes
-//! are kept identical to `tauriApi.ts` so `../api.ts` can dispatch to either
-//! at runtime.
+//! Web-mode transport. Hits the Axum HTTP routes exposed by `installer-web`
+//! and subscribes to download progress through `/ws/progress`. 与
+//! `tauriApi.ts` 一样实现 `ApiTransport`，由 `../api.ts` 在运行时选择；
+//! store 写入统一在 `../api.ts`，这里只负责传输。
 
-import { tools, mirrorProbes } from "../stores";
 import type {
+  ApiTransport,
   ToolDescriptor,
   InstallReport,
-  InstallMethod,
   DownloadProgress,
   MirrorProbe,
-  Channel,
   PathStatus,
-  PathScope,
   NodeInfo,
   Fix,
   ApplyFixReport,
   RemoveFixReport,
+  LogChunk,
   UnlistenFn,
 } from "../types";
 
@@ -41,6 +39,10 @@ const ACCESS_TOKEN = (() => {
   }
 })();
 
+/** WebSocket 断线重连的退避参数：1s 起步，每次翻倍，最多 30s。 */
+const WS_RETRY_BASE_MS = 1000;
+const WS_RETRY_MAX_MS = 30_000;
+
 function requestHeaders(json = false): Record<string, string> {
   return {
     ...(json ? { "Content-Type": "application/json" } : {}),
@@ -52,7 +54,8 @@ async function responseError(resp: Response): Promise<Error> {
   if (resp.status === 401) {
     return new Error("访问未授权，请使用带 ?token=访问令牌 的地址重新打开页面");
   }
-  return new Error(await resp.text());
+  const text = (await resp.text().catch(() => "")).trim();
+  return new Error(text || `${resp.status} ${resp.statusText}`.trim());
 }
 
 async function get<T>(path: string, query?: Record<string, string>): Promise<T> {
@@ -76,95 +79,107 @@ async function post<T>(path: string, body?: unknown): Promise<T> {
   return resp.json() as Promise<T>;
 }
 
-export async function initApp(): Promise<void> {
-  const list = await get<ToolDescriptor[]>("/api/tools");
-  tools.set(list);
-
-  get<MirrorProbe[]>("/api/mirrors/probe")
-    .catch(() => [] as MirrorProbe[])
-    .then((probes) => mirrorProbes.set(probes));
-}
-
-export async function refreshTools(): Promise<void> {
-  const list = await get<ToolDescriptor[]>("/api/tools");
-  tools.set(list);
-}
-
-export async function probeMirrors(): Promise<MirrorProbe[]> {
-  const probes = await post<MirrorProbe[]>("/api/mirrors/probe");
-  mirrorProbes.set(probes);
-  return probes;
-}
-
-export async function installTool(
-  toolId: string,
-  channel: Channel = "latest",
-  method: InstallMethod = "native",
-  mirror: string | null = null
-): Promise<InstallReport> {
-  return post<InstallReport>("/api/tools/install", { toolId, channel, method, mirror });
-}
-
-export async function detectNode(): Promise<NodeInfo> {
-  return get<NodeInfo>("/api/node");
-}
-
-export async function listFixes(): Promise<Fix[]> {
-  return get<Fix[]>("/api/fixes");
-}
-
-export async function applyFixes(fixIds: string[]): Promise<ApplyFixReport> {
-  return post<ApplyFixReport>("/api/fixes/apply", { fixIds });
-}
-
-export async function removeFixes(fixIds: string[]): Promise<RemoveFixReport> {
-  return post<RemoveFixReport>("/api/fixes/remove", { fixIds });
-}
-
-export async function openPath(path: string): Promise<void> {
-  await post<void>("/api/open-path", { path });
-}
-
-export async function onDownloadProgress(
-  cb: (p: DownloadProgress) => void
-): Promise<UnlistenFn> {
+function progressSocketUrl(): URL {
   // `new URL("/ws/progress", origin)` keeps host + port; switching the
   // protocol from http(s) to ws(s) is the only edit we need.
   const url = new URL("/ws/progress", window.location.origin);
   url.protocol = url.protocol.replace(/^http/, "ws");
   if (ACCESS_TOKEN) url.searchParams.set("token", ACCESS_TOKEN);
-  const sock = new WebSocket(url);
-  sock.addEventListener("message", (ev) => {
-    try {
-      const data = JSON.parse(ev.data) as DownloadProgress;
-      cb(data);
-    } catch {
-      // ignore malformed payloads
-    }
-  });
-  return () => {
-    sock.close();
+  return url;
+}
+
+/** 打开 `/ws/progress`，断开（服务重启、系统休眠等）后按指数退避自动重连；
+ * 调用返回的函数主动取消订阅后不再重连。 */
+function subscribeProgress(cb: (p: DownloadProgress) => void): Promise<UnlistenFn> {
+  let sock: WebSocket | null = null;
+  let retryTimer: ReturnType<typeof setTimeout> | null = null;
+  let attempt = 0;
+  let stopped = false;
+
+  const scheduleReconnect = () => {
+    if (stopped || retryTimer !== null) return;
+    const delay = Math.min(WS_RETRY_BASE_MS * 2 ** attempt, WS_RETRY_MAX_MS);
+    attempt += 1;
+    retryTimer = setTimeout(() => {
+      retryTimer = null;
+      connect();
+    }, delay);
   };
+
+  const connect = () => {
+    if (stopped) return;
+    let s: WebSocket;
+    try {
+      s = new WebSocket(progressSocketUrl());
+    } catch {
+      scheduleReconnect();
+      return;
+    }
+    sock = s;
+    s.addEventListener("open", () => {
+      attempt = 0;
+    });
+    s.addEventListener("message", (ev) => {
+      try {
+        cb(JSON.parse(ev.data) as DownloadProgress);
+      } catch {
+        // ignore malformed payloads
+      }
+    });
+    // `error` 之后浏览器总会再派发 `close`，重连统一在 close 里处理。
+    s.addEventListener("close", () => {
+      if (sock !== s) return;
+      sock = null;
+      scheduleReconnect();
+    });
+  };
+
+  connect();
+
+  return Promise.resolve(() => {
+    stopped = true;
+    if (retryTimer !== null) {
+      clearTimeout(retryTimer);
+      retryTimer = null;
+    }
+    const s = sock;
+    sock = null;
+    s?.close();
+  });
 }
 
-export async function checkPathStatus(toolId: string): Promise<PathStatus> {
-  return get<PathStatus>("/api/path/status", { toolId });
-}
+export const webApi: ApiTransport = {
+  listTools: () => get<ToolDescriptor[]>("/api/tools"),
 
-export async function addToPath(
-  toolId: string,
-  scope: PathScope = "user"
-): Promise<void> {
-  await post<void>("/api/path/add", { toolId, scope });
-}
+  probeMirrors: () => post<MirrorProbe[]>("/api/mirrors/probe"),
 
-export async function removeFromPath(
-  toolId: string,
-  scope: PathScope = "user"
-): Promise<void> {
-  await post<void>("/api/path/remove", { toolId, scope });
-}
+  installTool: (toolId, channel, method, mirror) =>
+    post<InstallReport>("/api/tools/install", { toolId, channel, method, mirror }),
 
-export async function getLogs(): Promise<string[]> {
-  return get<string[]>("/api/logs");
-}
+  detectNode: () => get<NodeInfo>("/api/node"),
+
+  listFixes: () => get<Fix[]>("/api/fixes"),
+
+  applyFixes: (fixIds) => post<ApplyFixReport>("/api/fixes/apply", { fixIds }),
+
+  removeFixes: (fixIds) => post<RemoveFixReport>("/api/fixes/remove", { fixIds }),
+
+  openPath: async (path) => {
+    await post<void>("/api/open-path", { path });
+  },
+
+  subscribeProgress,
+
+  checkPathStatus: (toolId) => get<PathStatus>("/api/path/status", { toolId }),
+
+  addToPath: async (toolId, scope) => {
+    await post<void>("/api/path/add", { toolId, scope });
+  },
+
+  removeFromPath: async (toolId, scope) => {
+    await post<void>("/api/path/remove", { toolId, scope });
+  },
+
+  getLogs: (since) =>
+    get<LogChunk>("/api/logs", since === null ? undefined : { since: String(since) }),
+};
