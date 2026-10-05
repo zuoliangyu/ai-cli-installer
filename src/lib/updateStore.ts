@@ -1,4 +1,5 @@
 import { writable, get } from "svelte/store";
+import type { Update } from "@tauri-apps/plugin-updater";
 import { openExternalUrl } from "./openExternal";
 
 declare const __IS_TAURI__: boolean;
@@ -11,6 +12,9 @@ export type UpdateStatus =
   | "installing"
   | "error";
 
+/** 出错的环节：检查更新 / 下载安装更新，用于展示不同的文案。 */
+export type UpdateErrorKind = "check" | "install";
+
 export interface UpdateState {
   status: UpdateStatus;
   currentVersion: string;
@@ -19,6 +23,7 @@ export interface UpdateState {
   downloadProgress: number;
   dismissed: boolean;
   errorMessage: string | null;
+  errorKind: UpdateErrorKind | null;
   /** 启动后是否已经触发过一次自动检查（避免每次切页都跑） */
   startupChecked: boolean;
 }
@@ -33,6 +38,7 @@ const initial: UpdateState = {
   downloadProgress: 0,
   dismissed: false,
   errorMessage: null,
+  errorKind: null,
   startupChecked: false,
 };
 
@@ -40,6 +46,25 @@ export const updateState = writable<UpdateState>(initial);
 
 function patch(p: Partial<UpdateState>) {
   updateState.update((s) => ({ ...s, ...p }));
+}
+
+/** 最近一次 check() 得到的 Update 对象，安装时直接复用，不再重复 check。 */
+let pendingUpdate: Update | null = null;
+
+function setPendingUpdate(update: Update | null) {
+  if (pendingUpdate && pendingUpdate !== update) {
+    // 释放旧的 Rust 侧资源
+    pendingUpdate.close().catch(() => {});
+  }
+  pendingUpdate = update;
+}
+
+function readDismissedVersion(): string | null {
+  try {
+    return localStorage.getItem(DISMISSED_VERSION_KEY);
+  } catch {
+    return null;
+  }
 }
 
 export async function loadCurrentVersion(): Promise<void> {
@@ -55,12 +80,15 @@ export async function loadCurrentVersion(): Promise<void> {
 
 export async function checkForUpdate(): Promise<void> {
   if (!__IS_TAURI__) return;
-  patch({ status: "checking", errorMessage: null });
+  const { status } = get(updateState);
+  if (status === "checking" || status === "downloading" || status === "installing") return;
+  patch({ status: "checking", errorMessage: null, errorKind: null });
   try {
     const { check } = await import("@tauri-apps/plugin-updater");
     const update = await check();
+    setPendingUpdate(update);
     if (update) {
-      const dismissedVersion = localStorage.getItem(DISMISSED_VERSION_KEY);
+      const dismissedVersion = readDismissedVersion();
       const isDismissed = dismissedVersion === update.version;
       patch({
         status: "available",
@@ -73,21 +101,19 @@ export async function checkForUpdate(): Promise<void> {
     }
   } catch (e) {
     console.warn("Update check failed:", e);
-    patch({ status: "error", errorMessage: String(e) });
+    setPendingUpdate(null);
+    patch({ status: "error", errorMessage: String(e), errorKind: "check" });
   }
 }
 
 export async function downloadAndInstall(): Promise<void> {
   if (!__IS_TAURI__) return;
-  patch({ status: "downloading", downloadProgress: 0, errorMessage: null });
+  // 防重入：只有「有可用更新」时才开始；下载/安装中再次点击直接忽略。
+  const update = pendingUpdate;
+  if (get(updateState).status !== "available" || !update) return;
+  patch({ status: "downloading", downloadProgress: 0, errorMessage: null, errorKind: null });
   try {
-    const { check } = await import("@tauri-apps/plugin-updater");
     const { relaunch } = await import("@tauri-apps/plugin-process");
-    const update = await check();
-    if (!update) {
-      patch({ status: "idle" });
-      return;
-    }
 
     let totalLength = 0;
     let downloaded = 0;
@@ -114,7 +140,7 @@ export async function downloadAndInstall(): Promise<void> {
     await relaunch();
   } catch (e) {
     console.error("Update install failed:", e);
-    patch({ status: "error", errorMessage: String(e) });
+    patch({ status: "error", errorMessage: String(e), errorKind: "install" });
   }
 }
 
@@ -128,7 +154,11 @@ export async function openDownloadPage(): Promise<void> {
 export function dismiss(): void {
   const { newVersion } = get(updateState);
   if (newVersion) {
-    localStorage.setItem(DISMISSED_VERSION_KEY, newVersion);
+    try {
+      localStorage.setItem(DISMISSED_VERSION_KEY, newVersion);
+    } catch {
+      // 存储不可用时仅在本次会话内忽略
+    }
   }
   patch({ dismissed: true });
 }
@@ -145,5 +175,4 @@ export async function runStartupCheck(): Promise<void> {
   // 给 UI 1.5 秒安顿一下再发请求，避免和 list_tools 的网络抢资源
   await new Promise((r) => setTimeout(r, 1500));
   await checkForUpdate();
-
 }

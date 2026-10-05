@@ -263,7 +263,7 @@
         oninput={updateQuery}
         aria-label="搜索配置修复"
         placeholder="搜索标题、编号、说明、标签或配置项"
-        class="w-full rounded-md border border-border bg-background px-3 py-1.5 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+        class="w-full rounded-md border border-border bg-background px-3 py-1.5 text-xs text-foreground placeholder:text-muted-foreground focus:outline-hidden focus:ring-1 focus:ring-primary"
       />
       <div class="flex flex-wrap gap-1.5">
         {#each [{ k: "all", l: `全部 ${fixes.length}` }, { k: "configured", l: `已配置 ${configuredCount}` }, { k: "pending", l: `未配置 ${fixes.length - configuredCount}` }] as f}
@@ -335,6 +335,7 @@
           >
             <div class="flex items-start gap-3 p-3">
               <input
+                id="fix-{fix.id}"
                 type="checkbox"
                 checked={fix.configured || selected.has(fix.id)}
                 onchange={() => toggle(fix)}
@@ -344,7 +345,11 @@
               />
               <div class="flex-1 min-w-0 flex flex-col gap-1.5">
                 <div class="flex items-center justify-between gap-3">
-                  <div class="flex items-center gap-2 flex-wrap min-w-0">
+                  <!-- 标题区域关联复选框：点击标题即可勾选 -->
+                  <label
+                    for="fix-{fix.id}"
+                    class="flex items-center gap-2 flex-wrap min-w-0 {busy || fix.configured ? '' : 'cursor-pointer'}"
+                  >
                     <span class="font-mono text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
                       {fix.code}
                     </span>
@@ -364,7 +369,7 @@
                     {#each tags as tag}
                       <span class={tagClass(tag.tone)}>{tag.label}</span>
                     {/each}
-                  </div>
+                  </label>
                   {#if fix.configured}
                     <button
                       disabled={busy}
@@ -472,7 +477,7 @@
         </div>
       {/if}
       {#if error}
-        <div role="alert" class="px-3 py-2 rounded-md text-xs font-mono bg-destructive/10 text-destructive whitespace-pre-wrap break-words">
+        <div role="alert" class="px-3 py-2 rounded-md text-xs font-mono bg-destructive/10 text-destructive whitespace-pre-wrap wrap-break-word">
           {error}
         </div>
       {/if}

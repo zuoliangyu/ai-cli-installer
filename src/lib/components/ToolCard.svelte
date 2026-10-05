@@ -1,17 +1,21 @@
 <script lang="ts">
-  import { onMount, onDestroy } from "svelte";
   import {
     installTool,
-    onDownloadProgress,
-    refreshTools,
+    retryToolVersions,
     checkPathStatus,
     addToPath,
     removeFromPath,
   } from "../api";
-  import { mirrorProbes } from "../stores";
+  import {
+    mirrorProbes,
+    installStates,
+    patchInstallState,
+    DEFAULT_INSTALL_STATE,
+    AUTO_MIRROR,
+    type InstallChannel,
+  } from "../stores";
   import type {
     ToolDescriptor,
-    DownloadProgress,
     PathStatus,
     InstallMethod,
     ToolInstallation,
@@ -25,72 +29,44 @@
   }
   let { tool }: Props = $props();
 
-  /** "auto" = race all mirrors (default). Any other value = pin to that
-   * mirror name; back-end refuses to fall back so the user's choice is
-   * honored even when it fails (the error banner offers a one-click
-   * "switch to auto and retry"). */
-  const AUTO_MIRROR = "auto";
+  // 安装状态（busy / 进度 / 结果 / 用户选择）在 stores.ts 中按 tool_id 保存，
+  // 离开本页后再回来不会丢失，也不会因按钮恢复可点而重复安装。
+  let st = $derived($installStates[tool.id] ?? DEFAULT_INSTALL_STATE);
+  let busy = $derived(st.busy);
 
-  let busy = $state(false);
   let pathBusy = $state(false);
-  let progress = $state<DownloadProgress | null>(null);
-  let message = $state<string | null>(null);
-  let error = $state<string | null>(null);
   let pathStatus = $state<PathStatus | null>(null);
-  let method = $state<InstallMethod>("native");
-  let mirror = $state<string>(AUTO_MIRROR);
-  let lastChannel = $state<"latest" | "stable">("latest");
-  let unlisten: (() => void) | null = null;
 
-  onMount(async () => {
-    unlisten = await onDownloadProgress((p) => {
-      if (p.tool_id === tool.id) progress = p;
-    });
-    refreshPathStatus();
+  // 挂载时以及 tool 对象更新（例如安装完成后 refreshTools）时刷新 PATH 状态。
+  $effect(() => {
+    void refreshPathStatus(tool.id);
   });
 
-  onDestroy(() => {
-    unlisten?.();
-  });
-
-  async function refreshPathStatus() {
+  async function refreshPathStatus(toolId: string = tool.id) {
     try {
-      pathStatus = await checkPathStatus(tool.id);
+      pathStatus = await checkPathStatus(toolId);
     } catch {
       pathStatus = null;
     }
   }
 
-  async function handleInstall(channel: "latest" | "stable" = "latest") {
-    lastChannel = channel;
-    busy = true;
-    error = null;
-    message = null;
-    progress = null;
-    try {
-      const pin = mirror === AUTO_MIRROR ? null : mirror;
-      const report = await installTool(tool.id, channel, method, pin);
-      const via = report.method === "npm" ? "npm" : pin ? `镜像 ${pin}` : "镜像";
-      let msg = `已通过${via}安装 ${report.version} (${report.elapsed_secs}s)`;
-      if (report.auto_applied_fixes && report.auto_applied_fixes.length > 0) {
-        msg += `\n顺便应用了配置修复：${report.auto_applied_fixes.join("、")}（已写入 Claude 配置，可直接 \`claude login\`；如需撤销请到「配置修复」面板）。`;
-      }
-      message = msg;
-      await refreshTools();
-      await refreshPathStatus();
-    } catch (e) {
-      error = e instanceof Error ? e.message : String(e);
-    } finally {
-      busy = false;
-      progress = null;
-    }
+  function setMethod(method: InstallMethod) {
+    patchInstallState(tool.id, { method });
+  }
+
+  function setMirror(mirror: string) {
+    patchInstallState(tool.id, { mirror });
+  }
+
+  function handleInstall(channel: InstallChannel = "latest") {
+    void installTool(tool.id, channel);
   }
 
   /** Used by the "switch to auto and retry" button shown in the error
    * banner when a pinned-mirror install fails. */
-  async function handleRetryAuto() {
-    mirror = AUTO_MIRROR;
-    await handleInstall(lastChannel);
+  function handleRetryAuto() {
+    setMirror(AUTO_MIRROR);
+    handleInstall(st.channel);
   }
 
   function mirrorOptionLabel(name: string, latencyMs: number | null, ok: boolean, errStr: string | null): string {
@@ -101,29 +77,19 @@
 
   /** 用户点了红色「获取版本失败 · 点此重试」按钮时调用。复用 busy 锁
    * 让其它按钮跟着禁用，避免重试期间用户又去点别的。 */
-  async function handleRetry() {
-    busy = true;
-    error = null;
-    message = null;
-    try {
-      await refreshTools();
-    } catch (e) {
-      error = e instanceof Error ? e.message : String(e);
-    } finally {
-      busy = false;
-    }
+  function handleRetry() {
+    void retryToolVersions(tool.id);
   }
 
   async function handleAddPath() {
     pathBusy = true;
-    error = null;
-    message = null;
+    patchInstallState(tool.id, { error: null, message: null, failedMirror: null });
     try {
       await addToPath(tool.id, "user");
-      message = "已加入用户 PATH。请重启终端或新开窗口生效。";
+      patchInstallState(tool.id, { message: "已加入用户 PATH。请重启终端或新开窗口生效。" });
       await refreshPathStatus();
     } catch (e) {
-      error = e instanceof Error ? e.message : String(e);
+      patchInstallState(tool.id, { error: e instanceof Error ? e.message : String(e) });
     } finally {
       pathBusy = false;
     }
@@ -131,14 +97,13 @@
 
   async function handleRemovePath(scope: "system" | "user") {
     pathBusy = true;
-    error = null;
-    message = null;
+    patchInstallState(tool.id, { error: null, message: null, failedMirror: null });
     try {
       await removeFromPath(tool.id, scope);
-      message = `已从${scope === "system" ? "系统" : "用户"} PATH 移除。`;
+      patchInstallState(tool.id, { message: `已从${scope === "system" ? "系统" : "用户"} PATH 移除。` });
       await refreshPathStatus();
     } catch (e) {
-      error = e instanceof Error ? e.message : String(e);
+      patchInstallState(tool.id, { error: e instanceof Error ? e.message : String(e) });
     } finally {
       pathBusy = false;
     }
@@ -264,7 +229,7 @@
           title={tool.latest_version_stale ? STALE_HINT : undefined}
           class="px-3 py-1.5 text-xs whitespace-nowrap rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
         >
-          {busy && lastChannel === "latest" ? "安装中…" : channelLabel("latest", tool.latest_version)}
+          {busy && st.channel === "latest" ? "安装中…" : channelLabel("latest", tool.latest_version)}
         </button>
       {/if}
       {#if channelFailed("stable")}
@@ -283,7 +248,7 @@
           title={tool.stable_version_stale ? STALE_HINT : undefined}
           class="px-3 py-1.5 text-xs whitespace-nowrap rounded-md border border-border bg-muted/50 text-foreground hover:bg-accent transition-colors disabled:opacity-50"
         >
-          {busy && lastChannel === "stable" ? "安装中…" : channelLabel("stable", tool.stable_version)}
+          {busy && st.channel === "stable" ? "安装中…" : channelLabel("stable", tool.stable_version)}
         </button>
       {/if}
     </div>
@@ -291,14 +256,19 @@
 
   <!-- Method selector -->
   {#if tool.supports_npm}
-    <div class="flex flex-wrap items-center gap-3 px-3 py-2 rounded-md bg-muted/40 text-xs">
-      <span class="text-muted-foreground font-medium">安装方式</span>
+    <div
+      role="radiogroup"
+      aria-labelledby="method-label-{tool.id}"
+      class="flex flex-wrap items-center gap-3 px-3 py-2 rounded-md bg-muted/40 text-xs"
+    >
+      <span id="method-label-{tool.id}" class="text-muted-foreground font-medium">安装方式</span>
       <label class="inline-flex items-center gap-1.5 cursor-pointer">
         <input
           type="radio"
           name="method-{tool.id}"
           value="native"
-          bind:group={method}
+          checked={st.method === "native"}
+          onchange={() => setMethod("native")}
           disabled={busy}
           class="accent-primary"
         />
@@ -309,7 +279,8 @@
           type="radio"
           name="method-{tool.id}"
           value="npm"
-          bind:group={method}
+          checked={st.method === "npm"}
+          onchange={() => setMethod("npm")}
           disabled={busy}
           class="accent-primary"
         />
@@ -330,11 +301,12 @@
        npm route falls back to npmmirror registry regardless of which
        mirror is selected here, so disabling it avoids pretending the
        choice has effect. -->
-  {#if method === "native"}
+  {#if st.method === "native"}
     <div class="flex flex-wrap items-center gap-3 px-3 py-2 rounded-md bg-muted/40 text-xs">
-      <span class="text-muted-foreground font-medium">下载来源</span>
+      <label for="mirror-{tool.id}" class="text-muted-foreground font-medium">下载来源</label>
       <select
-        bind:value={mirror}
+        id="mirror-{tool.id}"
+        bind:value={() => st.mirror, setMirror}
         disabled={busy}
         class="bg-background border border-border rounded px-2 py-1 text-xs text-foreground disabled:opacity-50"
         title="选择具体镜像。失败时不会自动切换，可用错误提示里的「改用自动模式重试」回到自动模式。"
@@ -346,7 +318,7 @@
           </option>
         {/each}
       </select>
-      {#if mirror !== AUTO_MIRROR}
+      {#if st.mirror !== AUTO_MIRROR}
         <span class="text-[10px] text-muted-foreground">
           仅尝试这一个镜像；失败不会回退
         </span>
@@ -354,11 +326,11 @@
     </div>
   {/if}
 
-  {#if progress}
+  {#if st.progress}
     <ProgressBar
-      downloaded={progress.downloaded}
-      total={progress.total}
-      mirror={progress.mirror}
+      downloaded={st.progress.downloaded}
+      total={st.progress.total}
+      mirror={st.progress.mirror}
     />
   {/if}
 
@@ -517,16 +489,16 @@
     </div>
   {/if}
 
-  {#if message}
-    <div role="status" class="px-3 py-2 rounded-md text-xs bg-success/10 text-success whitespace-pre-line">{message}</div>
+  {#if st.message}
+    <div role="status" class="px-3 py-2 rounded-md text-xs bg-success/10 text-success whitespace-pre-line">{st.message}</div>
   {/if}
-  {#if error}
+  {#if st.error}
     <div role="alert" class="flex flex-col gap-1.5 px-3 py-2 rounded-md text-xs bg-destructive/10 text-destructive">
-      <div class="font-mono whitespace-pre-wrap break-words">{error}</div>
-      {#if mirror !== AUTO_MIRROR}
+      <div class="font-mono whitespace-pre-wrap wrap-break-word">{st.error}</div>
+      {#if st.failedMirror}
         <div class="flex items-center gap-2">
           <span class="text-[11px] text-muted-foreground">
-            指定镜像 <code class="font-mono">{mirror}</code> 失败。
+            指定镜像 <code class="font-mono">{st.failedMirror}</code> 失败。
           </span>
           <button
             onclick={handleRetryAuto}

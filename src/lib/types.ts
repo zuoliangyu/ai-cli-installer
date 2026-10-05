@@ -46,7 +46,7 @@ export interface InstallReport {
   /** Fix IDs auto-applied as part of this install (e.g.
    * `"cc-005-onboarding-done"` for Claude Code). UI surfaces these as a
    * follow-up note so users know we touched their settings file. */
-  auto_applied_fixes?: string[];
+  auto_applied_fixes: string[];
 }
 
 export interface NodeInfo {
@@ -113,3 +113,37 @@ export interface PathStatus {
 export type PathScope = "system" | "user";
 
 export type UnlistenFn = () => void;
+
+/** 增量日志拉取结果。`next` 是下一行的序号，下次请求原样传回；
+ * `reset` 为 true 时应替换本地全部行（后端日志被截断/重启），否则追加。 */
+export interface LogChunk {
+  lines: string[];
+  next: number;
+  reset: boolean;
+}
+
+/** Tauri 与 Web 两种传输层都必须满足的接口：只负责传输，不读写任何 store。
+ * `services/tauriApi.ts` / `services/webApi.ts` 以显式类型标注导出实现，
+ * 签名不一致会在编译期报错。 */
+export interface ApiTransport {
+  listTools(): Promise<ToolDescriptor[]>;
+  probeMirrors(): Promise<MirrorProbe[]>;
+  installTool(
+    toolId: string,
+    channel: Channel,
+    method: InstallMethod,
+    mirror: string | null
+  ): Promise<InstallReport>;
+  detectNode(): Promise<NodeInfo>;
+  listFixes(): Promise<Fix[]>;
+  applyFixes(fixIds: string[]): Promise<ApplyFixReport>;
+  removeFixes(fixIds: string[]): Promise<RemoveFixReport>;
+  openPath(path: string): Promise<void>;
+  /** 订阅下载进度；返回的函数用于主动取消订阅。 */
+  subscribeProgress(cb: (p: DownloadProgress) => void): Promise<UnlistenFn>;
+  checkPathStatus(toolId: string): Promise<PathStatus>;
+  addToPath(toolId: string, scope: PathScope): Promise<void>;
+  removeFromPath(toolId: string, scope: PathScope): Promise<void>;
+  /** `since` 为 null 时拉取全部日志。 */
+  getLogs(since: number | null): Promise<LogChunk>;
+}

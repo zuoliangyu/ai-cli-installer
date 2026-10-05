@@ -2,12 +2,16 @@ import { writable } from "svelte/store";
 
 export type Theme = "light" | "dark" | "system";
 
+// 与 public/theme-init.js 使用同一个 key（首帧前同步应用主题，避免闪白）
 const KEY = "aci_theme";
 
 function getStored(): Theme {
-  if (typeof localStorage === "undefined") return "system";
-  const v = localStorage.getItem(KEY);
-  return v === "light" || v === "dark" || v === "system" ? v : "system";
+  try {
+    const v = localStorage.getItem(KEY);
+    return v === "light" || v === "dark" || v === "system" ? v : "system";
+  } catch {
+    return "system";
+  }
 }
 
 function systemPrefersDark(): boolean {
@@ -26,7 +30,11 @@ function applyTheme(t: Theme) {
 export const theme = writable<Theme>(getStored());
 
 theme.subscribe((t) => {
-  if (typeof localStorage !== "undefined") localStorage.setItem(KEY, t);
+  try {
+    localStorage.setItem(KEY, t);
+  } catch {
+    // 存储不可用时仅本次会话生效
+  }
   applyTheme(t);
 });
 

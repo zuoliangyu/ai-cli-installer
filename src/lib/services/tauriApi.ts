@@ -1,100 +1,56 @@
-//! Tauri-mode API. Calls the Rust commands registered in `src-tauri/src/lib.rs`
-//! through `invoke()`, and listens to the `download-progress` event for the
-//! streaming install progress.
+//! Tauri-mode transport. Calls the Rust commands registered in
+//! `src-tauri/src/lib.rs` through `invoke()`, and listens to the
+//! `download-progress` event for the streaming install progress.
+//! Store 写入统一在 `../api.ts`，这里只负责传输。
 
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { tools, mirrorProbes } from "../stores";
 import type {
+  ApiTransport,
   ToolDescriptor,
   InstallReport,
-  InstallMethod,
   DownloadProgress,
   MirrorProbe,
-  Channel,
   PathStatus,
-  PathScope,
   NodeInfo,
   Fix,
   ApplyFixReport,
   RemoveFixReport,
-  UnlistenFn,
+  LogChunk,
 } from "../types";
 
-export async function initApp(): Promise<void> {
-  const list = await invoke<ToolDescriptor[]>("list_tools");
-  tools.set(list);
+export const tauriApi: ApiTransport = {
+  listTools: () => invoke<ToolDescriptor[]>("list_tools"),
 
-  // Probe mirrors lazily, don't block first paint
-  invoke<MirrorProbe[]>("probe_mirrors")
-    .then((probes) => mirrorProbes.set(probes))
-    .catch(() => mirrorProbes.set([]));
-}
+  probeMirrors: () => invoke<MirrorProbe[]>("probe_mirrors"),
 
-export async function refreshTools(): Promise<void> {
-  const list = await invoke<ToolDescriptor[]>("list_tools");
-  tools.set(list);
-}
+  installTool: (toolId, channel, method, mirror) =>
+    invoke<InstallReport>("install_tool", { toolId, channel, method, mirror }),
 
-export async function probeMirrors(): Promise<MirrorProbe[]> {
-  const probes = await invoke<MirrorProbe[]>("probe_mirrors");
-  mirrorProbes.set(probes);
-  return probes;
-}
+  detectNode: () => invoke<NodeInfo>("detect_node"),
 
-export async function installTool(
-  toolId: string,
-  channel: Channel = "latest",
-  method: InstallMethod = "native",
-  mirror: string | null = null
-): Promise<InstallReport> {
-  return invoke<InstallReport>("install_tool", { toolId, channel, method, mirror });
-}
+  listFixes: () => invoke<Fix[]>("list_fixes"),
 
-export async function detectNode(): Promise<NodeInfo> {
-  return invoke<NodeInfo>("detect_node");
-}
+  applyFixes: (fixIds) => invoke<ApplyFixReport>("apply_fixes", { fixIds }),
 
-export async function listFixes(): Promise<Fix[]> {
-  return invoke<Fix[]>("list_fixes");
-}
+  removeFixes: (fixIds) => invoke<RemoveFixReport>("remove_fixes", { fixIds }),
 
-export async function applyFixes(fixIds: string[]): Promise<ApplyFixReport> {
-  return invoke<ApplyFixReport>("apply_fixes", { fixIds });
-}
+  openPath: async (path) => {
+    await invoke<void>("open_path", { path });
+  },
 
-export async function removeFixes(fixIds: string[]): Promise<RemoveFixReport> {
-  return invoke<RemoveFixReport>("remove_fixes", { fixIds });
-}
+  subscribeProgress: (cb) =>
+    listen<DownloadProgress>("download-progress", (e) => cb(e.payload)),
 
-export async function openPath(path: string): Promise<void> {
-  await invoke<void>("open_path", { path });
-}
+  checkPathStatus: (toolId) => invoke<PathStatus>("check_path_status", { toolId }),
 
-export async function onDownloadProgress(
-  cb: (p: DownloadProgress) => void
-): Promise<UnlistenFn> {
-  return listen<DownloadProgress>("download-progress", (e) => cb(e.payload));
-}
+  addToPath: async (toolId, scope) => {
+    await invoke<void>("add_to_path", { toolId, scope });
+  },
 
-export async function checkPathStatus(toolId: string): Promise<PathStatus> {
-  return invoke<PathStatus>("check_path_status", { toolId });
-}
+  removeFromPath: async (toolId, scope) => {
+    await invoke<void>("remove_from_path", { toolId, scope });
+  },
 
-export async function addToPath(
-  toolId: string,
-  scope: PathScope = "user"
-): Promise<void> {
-  await invoke<void>("add_to_path", { toolId, scope });
-}
-
-export async function removeFromPath(
-  toolId: string,
-  scope: PathScope = "user"
-): Promise<void> {
-  await invoke<void>("remove_from_path", { toolId, scope });
-}
-
-export async function getLogs(): Promise<string[]> {
-  return invoke<string[]>("get_logs");
-}
+  getLogs: (since) => invoke<LogChunk>("get_logs", { since }),
+};

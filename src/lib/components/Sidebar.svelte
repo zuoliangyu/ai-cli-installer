@@ -2,27 +2,21 @@
   import { Wrench, Bandage, Info, Sun, Moon, Monitor, RefreshCw, ScrollText } from "lucide-svelte";
   import { page, navigate, type Page } from "../page";
   import { theme, setTheme } from "../theme";
-  import { mirrorProbes } from "../stores";
+  import { mirrorProbes, mirrorProbing, mirrorProbeError } from "../stores";
   import { probeMirrors } from "../api";
   import { updateState } from "../updateStore";
   import { devMode } from "../devMode";
 
-  let probing = $state(false);
-  let probeError = $state<string | null>(null);
+  // 测速状态与错误放在共享 store：启动时的自动测速失败也能在这里显示。
+  let probing = $derived($mirrorProbing);
+  let probeError = $derived($mirrorProbeError);
   let hasUpdate = $derived(
     $updateState.status === "available" && !$updateState.dismissed
   );
 
-  async function rerunProbe() {
-    probing = true;
-    probeError = null;
-    try {
-      await probeMirrors();
-    } catch (error) {
-      probeError = error instanceof Error ? error.message : String(error);
-    } finally {
-      probing = false;
-    }
+  function rerunProbe() {
+    // 错误已由 probeMirrors 写入 mirrorProbeError
+    probeMirrors().catch(() => {});
   }
 
   let mirrorOk = $derived($mirrorProbes.filter((p) => p.ok).length);
@@ -78,7 +72,7 @@
       {/if}
     </button>
     {#if probeError}
-      <p role="alert" class="mt-1 text-[10px] text-destructive break-words" title={probeError}>
+      <p role="alert" class="mt-1 text-[10px] text-destructive wrap-break-word" title={probeError}>
         镜像测速失败，请点击重试
       </p>
     {/if}
@@ -90,7 +84,7 @@
             {#if p.ok && p.latency_ms !== null}
               <span class="text-success shrink-0 ml-2">{p.latency_ms}ms</span>
             {:else}
-              <span class="text-destructive shrink-0 ml-2 truncate max-w-[6rem]" title={p.error ?? "失败"}>
+              <span class="text-destructive shrink-0 ml-2 truncate max-w-24" title={p.error ?? "失败"}>
                 {p.error ?? "失败"}
               </span>
             {/if}
@@ -144,7 +138,7 @@
           aria-label="亮色模式"
           aria-pressed={$theme === "light"}
           class="p-1 rounded transition-colors {$theme === 'light'
-            ? 'bg-background text-foreground shadow-sm'
+            ? 'bg-background text-foreground shadow-xs'
             : 'text-muted-foreground hover:text-foreground'}"
           title="亮色模式"
         >
@@ -155,7 +149,7 @@
           aria-label="跟随系统主题"
           aria-pressed={$theme === "system"}
           class="p-1 rounded transition-colors {$theme === 'system'
-            ? 'bg-background text-foreground shadow-sm'
+            ? 'bg-background text-foreground shadow-xs'
             : 'text-muted-foreground hover:text-foreground'}"
           title="跟随系统"
         >
@@ -166,7 +160,7 @@
           aria-label="暗色模式"
           aria-pressed={$theme === "dark"}
           class="p-1 rounded transition-colors {$theme === 'dark'
-            ? 'bg-background text-foreground shadow-sm'
+            ? 'bg-background text-foreground shadow-xs'
             : 'text-muted-foreground hover:text-foreground'}"
           title="暗色模式"
         >
