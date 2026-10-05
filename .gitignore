@@ -43,3 +43,6 @@ pnpm-debug.log*
 
 # Claude Code 本地配置
 .claude/
+
+# CodeGraph 本地索引
+.codegraph/
