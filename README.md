@@ -2,9 +2,11 @@
 
 为 Claude Code / Codex CLI 提供镜像加速下载与一键安装的桌面应用，同时也能作为本地 / 远程 Web 服务运行。Tauri + Svelte 5 + Rust。
 
-当前版本：**v0.5.3**
+当前版本：**v0.6.0**
 
-> v0.5.3 起，CLI 安装与安装诊断在共享后端串行执行。连续安装多个工具时，后续任务会等待当前操作完成，避免 Windows 下并发争用下载文件或可执行文件导致 `os error 32`；桌面端与 Web 端行为一致。
+> v0.6.0 起，Web 模式默认启用访问令牌与 Host / Origin 校验，安装二进制改为原子替换，远程修复定义只能修改内置白名单内的配置项。macOS 桌面版最低需要 13.3。
+
+> CLI 安装与安装诊断在共享后端串行执行。连续安装多个工具时，后续任务会等待当前操作完成，避免 Windows 下并发争用下载文件或可执行文件导致 `os error 32`；桌面端与 Web 端行为一致。
 
 > Claude Code 走「镜像加速」时，若官方 bootstrap 的自我安装（`claude install`）因为回连 `downloads.claude.ai` 失败（国内网络常见），会自动 fallback 到直接把已校验的二进制部署到 `~/.local/bin/claude.exe`——保证装得上。
 

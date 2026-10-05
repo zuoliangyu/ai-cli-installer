@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-05
+
 ### 安全
 
 - Web 模式未设置令牌时自动生成随机令牌，并校验 Host 白名单（新增 `--allowed-host` / `INSTALLER_ALLOWED_HOSTS`）与跨源 Origin，防御 DNS rebinding；静态页增加 CSP、`X-Frame-Options` 等安全头。

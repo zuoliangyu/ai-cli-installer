@@ -25,7 +25,7 @@ dependencies = [
 
 [[package]]
 name = "ai-cli-installer"
-version = "0.5.3"
+version = "0.6.0"
 dependencies = [
  "installer-core",
  "serde",
@@ -2168,7 +2168,7 @@ dependencies = [
 
 [[package]]
 name = "installer-core"
-version = "0.5.3"
+version = "0.6.0"
 dependencies = [
  "dirs",
  "futures-util",
@@ -2186,7 +2186,7 @@ dependencies = [
 
 [[package]]
 name = "installer-web"
-version = "0.5.3"
+version = "0.6.0"
 dependencies = [
  "axum",
  "clap",
