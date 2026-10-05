@@ -9,7 +9,8 @@ use crate::npm_installer;
 use crate::platform;
 use crate::progress::ProgressCallback;
 use crate::tools::{InstallMethod, InstallReport, Tool, ToolDescriptor, ToolId};
-use crate::verifier;
+use crate::upstream::PlatformEntry;
+use crate::validate;
 
 pub struct CodexCli;
 
@@ -31,70 +32,63 @@ impl CodexCli {
         progress: ProgressCallback,
         client: reqwest::Client,
         mirrors: MirrorList,
-        channel: String,
+        version: String,
         started: Instant,
     ) -> Result<InstallReport> {
         let plat = platform::current()?;
+        validate::ensure_version(&version, "Codex 版本号")?;
 
-        let (_, version) = mirrors::fetch_version(&client, &mirrors, &channel).await?;
-        tracing::info!("codex resolved {} -> {}", channel, version);
-
-        let (_, manifest) = mirrors::fetch_manifest(&client, &mirrors, &version).await?;
-        let entry = manifest
-            .platforms
-            .get(plat)
-            .ok_or_else(|| AppError::ManifestMissingPlatform(plat.to_string()))?
-            .clone();
+        // Full list for the manifest so the trust policy can reach
+        // github-direct even when the user pinned one proxy for downloads.
+        let manifest_list = self.mirror_list();
+        let (_, manifest) = mirrors::fetch_manifest(&client, &manifest_list, &version).await?;
+        let (asset_plat, entry) = platform_entry(&manifest.platforms, plat)
+            .ok_or_else(|| AppError::ManifestMissingPlatform(plat.to_string()))?;
+        validate::ensure_file_name(&entry.binary, "manifest binary")?;
+        let runtime_name =
+            validate::ensure_file_name(entry.runtime_filename(), "manifest runtime_binary")?
+                .to_string();
 
         let staging = installer::staging_dir()?;
         tokio::fs::create_dir_all(&staging).await?;
-        let zst_dest = staging.join(format!("codex-{}-{}", version, plat));
+        let staged_name = format!("codex-{}-{}", version, plat);
+        let zst_dest = staging.join(validate::ensure_file_name(&staged_name, "staging file")?);
 
-        let mut last_err: Option<AppError> = None;
-        let mut downloaded_bytes: u64 = 0;
-        for m in &mirrors.mirrors {
-            let url = m.binary_url(&version, plat, &entry.binary);
-            tracing::info!("codex download attempt: {}", url);
-            match downloader::download_to_file(
-                &client,
-                &progress,
-                Self::ID,
-                m.name(),
-                &url,
-                &zst_dest,
-            )
-            .await
-            {
-                Ok(bytes) => {
-                    downloaded_bytes = bytes;
-                    last_err = None;
-                    break;
-                }
-                Err(e) => {
-                    tracing::warn!("mirror {} failed: {}", m.name(), e);
-                    last_err = Some(e);
-                    let _ = tokio::fs::remove_file(&zst_dest).await;
-                }
-            }
-        }
-        if let Some(e) = last_err {
-            return Err(e);
-        }
-        if downloaded_bytes == 0 {
-            return Err(AppError::AllMirrorsFailed);
-        }
+        // Collected up front: a borrowed iterator held across `.await` makes
+        // the install future non-`Send` (axum / tauri handlers need Send).
+        let candidates: Vec<(String, String)> = mirrors
+            .mirrors
+            .iter()
+            .map(|m| (m.name().to_string(), m.binary_url(&version, &asset_plat, &entry.binary)))
+            .collect();
+        downloader::download_verified(
+            &client,
+            &progress,
+            Self::ID,
+            candidates,
+            &entry.checksum,
+            Some(entry.size),
+            &zst_dest,
+        )
+        .await?;
 
-        verifier::verify(&zst_dest, &entry.checksum).await?;
-
-        let runtime_name = entry.runtime_filename();
         let dest_dir = self
             .launcher_dir()
             .ok_or_else(|| AppError::Other("no home dir".into()))?;
         tokio::fs::create_dir_all(&dest_dir).await?;
-        let final_path = dest_dir.join(runtime_name);
+        let final_path = dest_dir.join(&runtime_name);
 
-        decompress_zst(&zst_dest, &final_path)?;
-        installer::make_executable(&final_path).await?;
+        // Decompression is CPU-bound and synchronous: off the async runtime,
+        // into a temp file that's renamed over the (possibly running) binary.
+        let src = zst_dest.clone();
+        installer::install_executable(final_path.clone(), move |out| {
+            let input = std::fs::File::open(&src)?;
+            let mut decoder = zstd::stream::Decoder::new(input)?;
+            std::io::copy(&mut decoder, out)?;
+            Ok(())
+        })
+        .await
+        .map_err(|e| AppError::Other(format!("解压 Codex 失败：{}", e)))?;
         let _ = tokio::fs::remove_file(&zst_dest).await;
 
         Ok(InstallReport {
@@ -111,7 +105,7 @@ impl CodexCli {
         &self,
         client: reqwest::Client,
         mirrors: MirrorList,
-        channel: String,
+        version: String,
         started: Instant,
     ) -> Result<InstallReport> {
         let info = npm_installer::detect_node().await?;
@@ -124,17 +118,27 @@ impl CodexCli {
         }
 
         let plat = platform::current()?;
-        let (_, version) = mirrors::fetch_version(&client, &mirrors, &channel).await?;
-        tracing::info!("codex npm route resolved version {}", version);
+        validate::ensure_version(&version, "Codex 版本号")?;
+        tracing::info!("codex npm route version {}", version);
 
-        match npm_installer::install_via_mirror_tarballs(&client, &mirrors, &version, plat).await {
+        match npm_installer::install_via_mirror_tarballs(
+            &client,
+            &self.mirror_list(),
+            &mirrors,
+            Self::NPM_PACKAGE,
+            &version,
+            plat,
+        )
+        .await
+        {
             Ok(()) => tracing::info!("Codex installed via mirror tarballs"),
             Err(e) => {
                 tracing::warn!(
                     "codex mirror tarball install failed ({}), falling back to npmmirror",
                     e
                 );
-                npm_installer::install_global(Self::NPM_PACKAGE, None).await?;
+                let spec = format!("{}@{}", Self::NPM_PACKAGE, version);
+                npm_installer::install_global(&spec, None).await?;
             }
         }
 
@@ -153,6 +157,21 @@ impl CodexCli {
             auto_applied_fixes: Vec::new(),
         })
     }
+}
+
+/// Look up `plat` in the manifest. Codex's Linux builds are statically
+/// linked against musl and published once as `linux-x64` / `linux-arm64`,
+/// so a `*-musl` platform falls back to the plain key. Returns the key that
+/// matched (it's part of the asset name) and the entry.
+fn platform_entry(
+    platforms: &std::collections::BTreeMap<String, PlatformEntry>,
+    plat: &str,
+) -> Option<(String, PlatformEntry)> {
+    if let Some(e) = platforms.get(plat) {
+        return Some((plat.to_string(), e.clone()));
+    }
+    let base = plat.strip_suffix("-musl")?;
+    platforms.get(base).map(|e| (base.to_string(), e.clone()))
 }
 
 impl Tool for CodexCli {
@@ -211,21 +230,22 @@ impl Tool for CodexCli {
         run_version(&resolved).await
     }
 
-    async fn install(
+    async fn install_version(
         &self,
         method: InstallMethod,
         progress: ProgressCallback,
         client: reqwest::Client,
         mirrors: MirrorList,
-        channel: String,
+        _channel: String,
+        version: String,
     ) -> Result<InstallReport> {
         let started = Instant::now();
         match method {
             InstallMethod::Native => {
-                self.install_native(progress, client, mirrors, channel, started)
+                self.install_native(progress, client, mirrors, version, started)
                     .await
             }
-            InstallMethod::Npm => self.install_npm(client, mirrors, channel, started).await,
+            InstallMethod::Npm => self.install_npm(client, mirrors, version, started).await,
         }
     }
 }
@@ -238,17 +258,27 @@ async fn run_version(path: &std::path::Path) -> Option<String> {
         .map(String::from)
 }
 
-fn decompress_zst(src: &std::path::Path, dst: &std::path::Path) -> Result<()> {
-    use std::fs::File;
-    use std::io;
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    let input =
-        File::open(src).map_err(|e| AppError::Other(format!("open {}: {}", src.display(), e)))?;
-    let mut decoder = zstd::stream::Decoder::new(input)
-        .map_err(|e| AppError::Other(format!("zstd init: {}", e)))?;
-    let mut output = File::create(dst)
-        .map_err(|e| AppError::Other(format!("create {}: {}", dst.display(), e)))?;
-    io::copy(&mut decoder, &mut output)
-        .map_err(|e| AppError::Other(format!("zstd copy: {}", e)))?;
-    Ok(())
+    fn entry(binary: &str) -> PlatformEntry {
+        PlatformEntry {
+            binary: binary.into(),
+            runtime_binary: None,
+            checksum: "00".into(),
+            size: 1,
+        }
+    }
+
+    #[test]
+    fn musl_falls_back_to_static_linux_build() {
+        let mut platforms = std::collections::BTreeMap::new();
+        platforms.insert("linux-x64".to_string(), entry("codex.zst"));
+        let (key, _) = platform_entry(&platforms, "linux-x64-musl").unwrap();
+        assert_eq!(key, "linux-x64");
+        let (key, _) = platform_entry(&platforms, "linux-x64").unwrap();
+        assert_eq!(key, "linux-x64");
+        assert!(platform_entry(&platforms, "darwin-arm64").is_none());
+    }
 }

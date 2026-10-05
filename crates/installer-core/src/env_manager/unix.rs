@@ -6,35 +6,29 @@
 //!
 //! Marker block makes the edit reversible and idempotent:
 //!
-//!     # >>> ai-cli-installer (PATH) >>>
-//!     export PATH="$HOME/.local/bin:$PATH"
-//!     # <<< ai-cli-installer (PATH) <<<
+//! ```text
+//! # >>> ai-cli-installer (PATH) >>>
+//! export PATH="$HOME/.local/bin:$PATH"
+//! # <<< ai-cli-installer (PATH) <<<
+//! ```
+//!
+//! The string logic (which rc files, how to add / strip the block) lives in
+//! `rc_block.rs` so it's unit-tested on every platform.
 
 use std::path::{Path, PathBuf};
 
+use super::rc_block::{self, Strip, MARKER_BEGIN};
 use super::{PathScope, PathStatus};
 use crate::error::{AppError, Result};
 
-const MARKER_BEGIN: &str = "# >>> ai-cli-installer (PATH) >>>";
-const MARKER_END: &str = "# <<< ai-cli-installer (PATH) <<<";
-
 fn rc_files() -> Vec<PathBuf> {
-    let home = match dirs::home_dir() {
-        Some(h) => h,
-        None => return vec![],
+    let Some(home) = dirs::home_dir() else {
+        return vec![];
     };
-    // Edit all that exist; create the canonical .profile if none do.
-    let candidates = [".zshrc", ".bashrc", ".profile"];
-    let existing: Vec<PathBuf> = candidates
-        .iter()
-        .map(|n| home.join(n))
-        .filter(|p| p.exists())
-        .collect();
-    if existing.is_empty() {
-        vec![home.join(".profile")]
-    } else {
-        existing
-    }
+    let shell = std::env::var("SHELL").ok();
+    rc_block::rc_targets(&home, shell.as_deref(), cfg!(target_os = "macos"), |p| {
+        p.exists()
+    })
 }
 
 pub async fn status(dir: &Path) -> Result<PathStatus> {
@@ -72,24 +66,15 @@ pub async fn add(dir: &Path, scope: PathScope) -> Result<()> {
                 .into(),
         ));
     }
-    let dir_str = dir.to_string_lossy().to_string();
-    let block = format!(
-        "\n{}\nexport PATH=\"{}:$PATH\"\n{}\n",
-        MARKER_BEGIN, dir_str, MARKER_END
-    );
+    let block = rc_block::path_block(&dir.to_string_lossy());
     for rc in rc_files() {
-        let existing = std::fs::read_to_string(&rc).unwrap_or_default();
-        if existing.contains(MARKER_BEGIN) {
-            // Already present — no-op
-            continue;
-        }
-        let mut new_content = existing;
-        if !new_content.is_empty() && !new_content.ends_with('\n') {
-            new_content.push('\n');
-        }
-        new_content.push_str(&block);
-        crate::config_file::write_with_backup(&rc, new_content)
-            .map_err(|e| AppError::Other(format!("write {}: {}", rc.display(), e)))?;
+        // Read + append + write happens under the config lock in one go.
+        crate::config_file::update_with_backup(&rc, |existing| {
+            Ok::<_, std::io::Error>(
+                rc_block::append_block(existing.unwrap_or(""), &block).map(String::into_bytes),
+            )
+        })
+        .map_err(|e| AppError::Other(format!("write {}: {}", rc.display(), e)))?;
     }
     Ok(())
 }
@@ -101,37 +86,32 @@ pub async fn remove(dir: &Path, scope: PathScope) -> Result<()> {
         ));
     }
     let _ = dir; // signature parity with windows
+    let mut incomplete: Vec<String> = Vec::new();
     for rc in rc_files() {
-        let content = match std::fs::read_to_string(&rc) {
-            Ok(c) => c,
-            Err(_) => continue,
-        };
-        if !content.contains(MARKER_BEGIN) {
+        if !rc.exists() {
             continue;
         }
-        let new = strip_marker_block(&content);
-        crate::config_file::write_with_backup(&rc, new)
-            .map_err(|e| AppError::Other(format!("write {}: {}", rc.display(), e)))?;
+        crate::config_file::update_with_backup(&rc, |content| {
+            Ok::<_, std::io::Error>(match content.map(rc_block::strip_marker_block) {
+                Some(Strip::Removed(new)) => Some(new.into_bytes()),
+                Some(Strip::Incomplete) => {
+                    tracing::warn!(
+                        "{}: begin marker without end marker; left untouched",
+                        rc.display()
+                    );
+                    incomplete.push(rc.display().to_string());
+                    None
+                }
+                Some(Strip::NotFound) | None => None,
+            })
+        })
+        .map_err(|e| AppError::Other(format!("write {}: {}", rc.display(), e)))?;
+    }
+    if !incomplete.is_empty() {
+        return Err(AppError::Other(format!(
+            "以下文件中的 PATH 标记块缺少结束标记，为避免误删你的配置未做修改，请手动删除：{}",
+            incomplete.join("、")
+        )));
     }
     Ok(())
-}
-
-fn strip_marker_block(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    let mut skipping = false;
-    for line in s.lines() {
-        if line.trim() == MARKER_BEGIN {
-            skipping = true;
-            continue;
-        }
-        if line.trim() == MARKER_END {
-            skipping = false;
-            continue;
-        }
-        if !skipping {
-            out.push_str(line);
-            out.push('\n');
-        }
-    }
-    out
 }

@@ -15,6 +15,8 @@ mod windows;
 #[cfg(windows)]
 use windows as imp;
 
+#[cfg(any(unix, test))]
+mod rc_block;
 #[cfg(unix)]
 mod unix;
 #[cfg(unix)]
