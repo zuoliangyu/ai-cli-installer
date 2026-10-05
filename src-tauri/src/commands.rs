@@ -14,7 +14,7 @@ use installer_core::progress::{DownloadProgress, ProgressCallback};
 use installer_core::tools::{InstallMethod, InstallReport, ToolDescriptor};
 use installer_core::{app_state, AppState, Result};
 
-use crate::log_buffer::LogBuffer;
+use crate::log_buffer::{LogBuffer, LogChunk};
 
 /// Wrap the Tauri `AppHandle` as a `ProgressCallback` that emits
 /// `download-progress` events to the front-end window.
@@ -99,6 +99,6 @@ pub async fn remove_from_path(tool_id: String, scope: Option<PathScope>) -> Resu
 }
 
 #[tauri::command]
-pub async fn get_logs(state: State<'_, LogBuffer>) -> Result<Vec<String>> {
-    Ok(state.lines())
+pub async fn get_logs(state: State<'_, LogBuffer>, since: Option<u64>) -> Result<LogChunk> {
+    Ok(state.since(since))
 }

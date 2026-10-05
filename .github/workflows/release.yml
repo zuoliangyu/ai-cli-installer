@@ -10,14 +10,19 @@ on:
         description: 'Tag (e.g. v0.0.7). Required for manual run.'
         required: true
 
-# Concurrency: only one release per tag in flight
+# Concurrency: only one release per tag in flight. `inputs.tag` is only set
+# for manual runs; tag pushes fall back to the tag name.
 concurrency:
-  group: release-${{ github.ref || github.event.inputs.tag }}
+  group: release-${{ inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
 # GITHUB_TOKEN needs explicit write permission for `gh release` to work.
 permissions:
   contents: write
+
+env:
+  # Manual runs build the requested tag, not the branch they were started from.
+  RELEASE_REF: ${{ inputs.tag || github.ref }}
 
 jobs:
   prepare:
@@ -27,20 +32,54 @@ jobs:
       tag: ${{ steps.resolve.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_REF }}
 
       - name: Resolve tag
         id: resolve
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
         run: |
-          if [ -n "${{ github.event.inputs.tag }}" ]; then
-            echo "tag=${{ github.event.inputs.tag }}" >> $GITHUB_OUTPUT
+          if [ -n "$INPUT_TAG" ]; then
+            TAG="$INPUT_TAG"
           else
-            echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+            TAG="${GITHUB_REF#refs/tags/}"
           fi
+          if ! printf '%s' "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$'; then
+            echo "::error::Invalid tag: $TAG (expected vX.Y.Z)"
+            exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Verify versions match tag
+        env:
+          TAG: ${{ steps.resolve.outputs.tag }}
+        run: |
+          VERSION="${TAG#v}"
+          cargo_version() {
+            sed -n '/^\[package\]/,/^\[/{s/^version *= *"\(.*\)"/\1/p}' "$1" | head -1
+          }
+          fail=0
+          check() {
+            if [ "$2" != "$VERSION" ]; then
+              echo "::error file=$1::version '$2' does not match tag $TAG"
+              fail=1
+            else
+              echo "ok: $1 = $2"
+            fi
+          }
+          check src-tauri/tauri.conf.json "$(jq -r .version src-tauri/tauri.conf.json)"
+          check package.json "$(jq -r .version package.json)"
+          for manifest in src-tauri/Cargo.toml crates/installer-core/Cargo.toml crates/installer-web/Cargo.toml; do
+            check "$manifest" "$(cargo_version "$manifest")"
+          done
+          exit "$fail"
 
       - name: Extract release notes from CHANGELOG
         id: notes
+        env:
+          TAG: ${{ steps.resolve.outputs.tag }}
         run: |
-          TAG="${{ steps.resolve.outputs.tag }}"
           VERSION="${TAG#v}"
           # Extract the section between "## [VERSION]" and the next "## "
           # (exclusive). Use string `index()` instead of regex — more portable
@@ -66,46 +105,65 @@ jobs:
       - name: Create draft release (if not exists)
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.resolve.outputs.tag }}
+          REPO: ${{ github.repository }}
         run: |
-          TAG="${{ steps.resolve.outputs.tag }}"
-          if ! gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+          if ! gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
             gh release create "$TAG" \
-              --repo "${{ github.repository }}" \
+              --repo "$REPO" \
               --title "$TAG" \
               --notes-file /tmp/release-notes.md \
-              --target main \
+              --verify-tag \
               --draft
           else
             # Release already exists (re-run scenario) — refresh notes from CHANGELOG
             gh release edit "$TAG" \
-              --repo "${{ github.repository }}" \
+              --repo "$REPO" \
               --notes-file /tmp/release-notes.md
           fi
 
   build:
-    name: Build (${{ matrix.os }})
+    name: Build (${{ matrix.name }})
     needs: prepare
     strategy:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-22.04
+          - name: linux-x86_64
+            os: ubuntu-22.04
             tauri_args: ''
-          - os: windows-latest
+            rust_target: ''
+          - name: windows-x86_64
+            os: windows-latest
             tauri_args: ''
-          - os: macos-latest
+            rust_target: ''
+          - name: macos-aarch64
+            os: macos-latest
             tauri_args: '--target aarch64-apple-darwin'
+            rust_target: aarch64-apple-darwin
+            # Both macOS builds emit `AI CLI Installer.app.tar.gz`; rename the
+            # updater bundle per arch so the uploads don't clobber each other.
+            updater_arch: aarch64
+          - name: macos-x86_64
+            os: macos-latest
+            tauri_args: '--target x86_64-apple-darwin'
+            rust_target: x86_64-apple-darwin
+            updater_arch: x64
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_REF }}
 
       - name: Install Linux deps
-        if: matrix.os == 'ubuntu-22.04'
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_target }}
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
@@ -113,6 +171,7 @@ jobs:
           # Workspace root holds Cargo.lock + the three members
           # (src-tauri, crates/installer-core, crates/installer-web).
           workspaces: .
+          key: ${{ matrix.name }}
 
       - uses: actions/setup-node@v4
         with:
@@ -138,19 +197,33 @@ jobs:
       - name: Upload artifacts to release
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+          REPO: ${{ github.repository }}
+          ARTIFACT_PATHS: ${{ steps.tauri.outputs.artifactPaths }}
+          UPDATER_ARCH: ${{ matrix.updater_arch }}
         shell: bash
         run: |
-          TAG="${{ needs.prepare.outputs.tag }}"
-          PATHS='${{ steps.tauri.outputs.artifactPaths }}'
+          VERSION="${TAG#v}"
+          staging=$(mktemp -d)
           # Strip CR (Windows git-bash) and skip dirs (.app bundles).
-          echo "$PATHS" | jq -r '.[]' | tr -d '\r' | while IFS= read -r f; do
+          printf '%s' "$ARTIFACT_PATHS" | jq -r '.[]' | tr -d '\r' | while IFS= read -r f; do
             if [ -d "$f" ]; then
               echo "skip dir: $f"
               continue
             fi
             f="${f//\\//}"
+            name=$(basename "$f")
+            if [ -n "$UPDATER_ARCH" ]; then
+              case "$name" in
+                *.app.tar.gz|*.app.tar.gz.sig)
+                  renamed="AI.CLI.Installer_${VERSION}_${UPDATER_ARCH}.app.tar.gz${name##*.app.tar.gz}"
+                  cp "$f" "$staging/$renamed"
+                  f="$staging/$renamed"
+                  ;;
+              esac
+            fi
             echo "uploading: $f"
-            gh release upload "$TAG" "$f" --repo "${{ github.repository }}" --clobber
+            gh release upload "$TAG" "$f" --repo "$REPO" --clobber
           done
 
   generate-latest:
@@ -161,61 +234,66 @@ jobs:
       - name: Build and upload latest.json
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+          REPO: ${{ github.repository }}
         run: |
-          TAG="${{ needs.prepare.outputs.tag }}"
           VERSION="${TAG#v}"
           tmp=$(mktemp -d)
           cd "$tmp"
 
-          gh release download "$TAG" --repo "${{ github.repository }}" \
-            -p '*.sig' || true
+          # Missing signatures are reported per platform below.
+          gh release download "$TAG" --repo "$REPO" -p '*.sig' || true
           ls -la
+          gh release view "$TAG" --repo "$REPO" --json assets -q '.assets[].name' > assets.txt
 
-          read_sig() {
-            local pattern="$1"
-            local f
-            f=$(ls $pattern 2>/dev/null | head -1)
-            [ -n "$f" ] && cat "$f" || echo ""
+          URL_BASE="https://github.com/$REPO/releases/download/$TAG"
+          missing=0
+
+          # Prints "<signature>\t<url>" for the single asset whose .sig matches
+          # the glob; the URL comes from the real uploaded asset name, so it
+          # can't drift from what tauri produced.
+          platform() {
+            local key="$1" pattern="$2" sig asset
+            sig=$(ls $pattern 2>/dev/null | head -1)
+            if [ -z "$sig" ] || [ ! -s "$sig" ]; then
+              echo "::error::missing signature for $key ($pattern)" >&2
+              missing=1
+              return
+            fi
+            asset="${sig%.sig}"
+            if ! grep -Fxq "$asset" assets.txt; then
+              echo "::error::signature $sig has no matching asset $asset" >&2
+              missing=1
+              return
+            fi
+            jq -n --arg key "$key" --arg sig "$(cat "$sig")" --arg url "$URL_BASE/$asset" \
+              '{($key): {signature: $sig, url: $url}}' > "platform-$key.json"
           }
 
           # Tauri v2 updater on Windows downloads NSIS installer directly,
           # verifies via .exe.sig — no .zip wrapper needed.
-          WIN_SIG=$(read_sig "*_x64-setup.exe.sig")
-          DARWIN_SIG=$(read_sig "*.app.tar.gz.sig")
-          LINUX_SIG=$(read_sig "*_amd64.AppImage.sig")
+          platform windows-x86_64 "*_x64-setup.exe.sig"
+          platform darwin-aarch64 "*_${VERSION}_aarch64.app.tar.gz.sig"
+          platform darwin-x86_64 "*_${VERSION}_x64.app.tar.gz.sig"
+          platform linux-x86_64 "*_amd64.AppImage.sig"
 
-          if [ -z "$WIN_SIG" ] || [ -z "$DARWIN_SIG" ] || [ -z "$LINUX_SIG" ]; then
-            echo "WARNING: missing sig (win=${#WIN_SIG} darwin=${#DARWIN_SIG} linux=${#LINUX_SIG})"
+          if [ "$missing" -ne 0 ]; then
+            echo "Refusing to publish latest.json with missing signatures"
+            exit 1
           fi
 
-          URL_BASE="https://github.com/${{ github.repository }}/releases/download/$TAG"
           PUB_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-
-          jq -n \
+          jq -s \
             --arg version "$VERSION" \
             --arg notes "Release v$VERSION" \
             --arg pub_date "$PUB_DATE" \
-            --arg win_sig "$WIN_SIG" \
-            --arg win_url "$URL_BASE/AI.CLI.Installer_${VERSION}_x64-setup.exe" \
-            --arg darwin_sig "$DARWIN_SIG" \
-            --arg darwin_url "$URL_BASE/AI.CLI.Installer.app.tar.gz" \
-            --arg linux_sig "$LINUX_SIG" \
-            --arg linux_url "$URL_BASE/AI.CLI.Installer_${VERSION}_amd64.AppImage" \
-            '{
-              version: $version,
-              notes: $notes,
-              pub_date: $pub_date,
-              platforms: {
-                "windows-x86_64": { signature: $win_sig, url: $win_url },
-                "darwin-aarch64": { signature: $darwin_sig, url: $darwin_url },
-                "linux-x86_64":   { signature: $linux_sig, url: $linux_url }
-              }
-            }' > latest.json
+            '{version: $version, notes: $notes, pub_date: $pub_date, platforms: add}' \
+            platform-*.json > latest.json
 
           echo "=== latest.json ==="
           cat latest.json
 
-          gh release upload "$TAG" latest.json --repo "${{ github.repository }}" --clobber
+          gh release upload "$TAG" latest.json --repo "$REPO" --clobber
 
   publish:
     name: Publish release
@@ -225,8 +303,10 @@ jobs:
       - name: Mark release as non-draft + latest
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+          REPO: ${{ github.repository }}
         run: |
-          gh release edit "${{ needs.prepare.outputs.tag }}" \
-            --repo "${{ github.repository }}" \
+          gh release edit "$TAG" \
+            --repo "$REPO" \
             --draft=false \
             --latest

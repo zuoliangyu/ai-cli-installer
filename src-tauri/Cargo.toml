@@ -4,7 +4,7 @@ version = "0.5.3"
 description = "One-click installer for Claude Code with mirror acceleration"
 authors = ["zuoliangyu"]
 edition = "2021"
-rust-version = "1.77"
+rust-version = "1.80"
 
 [lib]
 name = "ai_cli_installer_lib"
@@ -19,7 +19,7 @@ installer-core = { path = "../crates/installer-core" }
 tauri = { version = "2", features = [] }
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
-tauri-plugin-shell = "2"
+tauri-plugin-opener = "2"
 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

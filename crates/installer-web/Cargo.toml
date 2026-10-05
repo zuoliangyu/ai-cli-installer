@@ -2,7 +2,7 @@
 name = "installer-web"
 version = "0.5.3"
 edition = "2021"
-rust-version = "1.77"
+rust-version = "1.80"
 description = "Axum HTTP/WebSocket server for ai-cli-installer (Web mode)"
 
 [[bin]]
@@ -21,3 +21,4 @@ mime_guess = "2"
 clap = { version = "4", features = ["derive", "env"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+getrandom = "0.3"

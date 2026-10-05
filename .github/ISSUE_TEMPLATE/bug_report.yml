@@ -1,0 +1,108 @@
+name: Bug 报告
+description: 报告安装失败、界面异常或其他问题
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢反馈！提交前请先搜索是否已有相同 Issue。日志中如包含 API Key、令牌或个人路径，请先打码。
+
+  - type: textarea
+    id: description
+    attributes:
+      label: 问题描述
+      description: 发生了什么？期望的结果是什么？
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      placeholder: |
+        1. 打开应用
+        2. 选择 …
+        3. 点击 …
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: 操作系统
+      options:
+        - Windows 11
+        - Windows 10
+        - macOS（Apple Silicon）
+        - macOS（Intel）
+        - Linux
+        - 其他
+    validations:
+      required: true
+
+  - type: input
+    id: os-detail
+    attributes:
+      label: 系统版本详情
+      description: 例如 Windows 11 23H2、macOS 15.1、Ubuntu 24.04
+    validations:
+      required: false
+
+  - type: input
+    id: version
+    attributes:
+      label: 应用版本
+      description: 可在「关于」页面查看，例如 0.5.3
+    validations:
+      required: true
+
+  - type: dropdown
+    id: mode
+    attributes:
+      label: 运行模式
+      options:
+        - 桌面端（Tauri）
+        - Web 模式（installer-web）
+    validations:
+      required: true
+
+  - type: dropdown
+    id: tool
+    attributes:
+      label: 涉及的工具
+      multiple: true
+      options:
+        - Claude Code
+        - Codex CLI
+        - 配置修复
+        - PATH 管理
+        - 自动更新
+        - 其他
+    validations:
+      required: true
+
+  - type: input
+    id: install-method
+    attributes:
+      label: 安装方式 / 镜像
+      description: 例如 原生安装 + 自动镜像、npm 安装、指定 github-direct
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: 日志
+      description: 桌面端可在「开发者选项 → 日志」中复制；Web 模式请粘贴 installer-web 的终端输出。
+      render: text
+    validations:
+      required: false
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: 补充信息
+      description: 截图、网络环境（代理 / 公司网络）等
+    validations:
+      required: false

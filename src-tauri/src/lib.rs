@@ -14,15 +14,14 @@ pub fn run() {
 
     tracing_subscriber::registry()
         .with(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )
         .with(tracing_subscriber::fmt::layer())
         .with(buf_layer)
         .init();
 
     tauri::Builder::default()
-        .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(app_state::shared())
@@ -91,5 +90,8 @@ fn configure_main_window(app: &tauri::App) {
 }
 
 fn first_run_marker_path(app: &tauri::App) -> Option<std::path::PathBuf> {
-    app.path().app_config_dir().ok().map(|dir| dir.join(".window_initialized"))
+    app.path()
+        .app_config_dir()
+        .ok()
+        .map(|dir| dir.join(".window_initialized"))
 }
