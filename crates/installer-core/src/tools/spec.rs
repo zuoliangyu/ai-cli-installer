@@ -8,19 +8,14 @@ use crate::progress::ProgressCallback;
 
 pub type ToolId = &'static str;
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum InstallMethod {
     /// Download native binary from our mirror, verify SHA256, place on disk.
+    #[default]
     Native,
     /// Run `npm install -g <package>`. Requires Node.js on the user's machine.
     Npm,
-}
-
-impl Default for InstallMethod {
-    fn default() -> Self {
-        Self::Native
-    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -100,6 +95,7 @@ pub trait Tool: Send + Sync {
 
     async fn detect_installed(&self) -> Option<String>;
 
+    /// Resolve `channel` through `mirrors`, then install that version.
     async fn install(
         &self,
         method: InstallMethod,
@@ -107,5 +103,23 @@ pub trait Tool: Send + Sync {
         client: reqwest::Client,
         mirrors: MirrorList,
         channel: String,
+    ) -> Result<InstallReport> {
+        let (_, version) = crate::mirrors::fetch_version(&client, &mirrors, &channel).await?;
+        tracing::info!("{} resolved {} -> {}", self.id(), channel, version);
+        self.install_version(method, progress, client, mirrors, channel, version)
+            .await
+    }
+
+    /// Install an already-resolved `version` (from `channel`). Lets
+    /// `app_state::install_tool` reuse the version it just looked up instead
+    /// of racing the mirrors a second time.
+    async fn install_version(
+        &self,
+        method: InstallMethod,
+        progress: ProgressCallback,
+        client: reqwest::Client,
+        mirrors: MirrorList,
+        channel: String,
+        version: String,
     ) -> Result<InstallReport>;
 }

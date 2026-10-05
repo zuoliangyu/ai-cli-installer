@@ -5,15 +5,16 @@
 //! consume `&AppState` and a `ProgressCallback`, then call into the rest
 //! of the core crate.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::{Mutex, RwLock};
 
 use crate::env_manager::{self, PathScope, PathStatus};
 use crate::error::{AppError, Result};
 use crate::fixes::{self, ApplyReport, Fix, RemoveReport};
-use crate::install_diagnostics;
+use crate::install_diagnostics::{self, InstallationSource};
 use crate::mirrors::{self, MirrorList, MirrorProbe};
 use crate::npm_installer::{self, NodeInfo};
 use crate::progress::ProgressCallback;
@@ -22,24 +23,65 @@ use crate::tools::{
 };
 use crate::version_cache;
 
+/// How long a successful channel → version lookup is reused in memory
+/// (list refresh → the install that follows) before racing mirrors again.
+const VERSION_MEMO_TTL: Duration = Duration::from_secs(5 * 60);
+
 pub struct AppState {
     pub client: reqwest::Client,
     pub mirrors: RwLock<MirrorList>,
+    /// Serializes installs and diagnostics. Introduced in v0.5.3: running a
+    /// tool's `--version` while an install replaces it caused Windows
+    /// file-in-use errors.
     tool_operations: Mutex<()>,
+    /// Last successful `list_tools` result, served while an operation holds
+    /// `tool_operations` so the UI doesn't freeze during an install.
+    tools_cache: std::sync::Mutex<Option<Vec<ToolDescriptor>>>,
+    /// `(tool_id, channel) → (version, fetched)`; see [`VERSION_MEMO_TTL`].
+    version_memo: std::sync::Mutex<HashMap<(String, String), (String, Instant)>>,
 }
 
 impl AppState {
     pub fn new() -> Self {
+        // GUI launches (Finder / desktop launchers) inherit a minimal PATH;
+        // fix it before anything spawns `node` / `npm` / `claude`.
+        crate::platform::ensure_login_shell_path();
         let client = reqwest::Client::builder()
             .user_agent(concat!("ai-cli-installer/", env!("CARGO_PKG_VERSION")))
             .timeout(Duration::from_secs(60))
             .build()
             .expect("build reqwest client");
+        Self::with_client(client)
+    }
+
+    fn with_client(client: reqwest::Client) -> Self {
         Self {
             client,
             mirrors: RwLock::new(MirrorList::builtin()),
             tool_operations: Mutex::new(()),
+            tools_cache: std::sync::Mutex::new(None),
+            version_memo: std::sync::Mutex::new(HashMap::new()),
         }
+    }
+
+    fn memo_get(&self, tool_id: &str, channel: &str) -> Option<String> {
+        let memo = self.version_memo.lock().ok()?;
+        memo.get(&(tool_id.to_string(), channel.to_string()))
+            .filter(|(_, at)| at.elapsed() < VERSION_MEMO_TTL)
+            .map(|(v, _)| v.clone())
+    }
+
+    fn memo_put(&self, tool_id: &str, channel: &str, version: &str) {
+        if let Ok(mut memo) = self.version_memo.lock() {
+            memo.insert(
+                (tool_id.to_string(), channel.to_string()),
+                (version.to_string(), Instant::now()),
+            );
+        }
+    }
+
+    fn cached_tools(&self) -> Option<Vec<ToolDescriptor>> {
+        self.tools_cache.lock().ok()?.clone()
     }
 }
 
@@ -57,41 +99,64 @@ impl Default for AppState {
 
 pub async fn list_tools(state: &AppState) -> Result<Vec<ToolDescriptor>> {
     // ponytail: global lock; split download/deploy phases if parallel installs matter.
-    let _operation = state.tool_operations.lock().await;
+    // While an install / diagnosis holds the lock, running `--version` on the
+    // binaries being replaced is exactly what v0.5.3 serialized away — so
+    // answer from the last result instead of blocking the UI for minutes.
+    let _operation = match state.tool_operations.try_lock() {
+        Ok(guard) => guard,
+        Err(_) => {
+            if let Some(cached) = state.cached_tools() {
+                tracing::debug!("list_tools: operation in progress, serving cached result");
+                return Ok(cached);
+            }
+            state.tool_operations.lock().await
+        }
+    };
+    let tools = list_tools_uncached(state).await;
+    if let Ok(mut cache) = state.tools_cache.lock() {
+        *cache = Some(tools.clone());
+    }
+    Ok(tools)
+}
+
+async fn list_tools_uncached(state: &AppState) -> Vec<ToolDescriptor> {
     let cc = ClaudeCode;
     let mut cd = cc.descriptor();
 
     let cx = CodexCli;
     let mut xd = cx.descriptor();
 
-    let (
-        cc_installed,
-        cc_latest,
-        cc_stable,
-        cc_installations,
-        cx_installed,
-        cx_latest,
-        cx_stable,
-        cx_installations,
-    ) = tokio::join!(
-        cc.detect_installed(),
-        fetch_channel_version(&state.client, &cc, "latest"),
-        fetch_channel_version(&state.client, &cc, "stable"),
-        install_diagnostics::diagnose(
-            "claude",
-            native_launcher_path(&cc, "claude"),
-            cc.launcher_dir(),
-            cc.npm_package(),
-        ),
-        cx.detect_installed(),
-        fetch_channel_version(&state.client, &cx, "latest"),
-        fetch_channel_version(&state.client, &cx, "stable"),
-        install_diagnostics::diagnose(
-            "codex",
-            native_launcher_path(&cx, "codex"),
-            cx.launcher_dir(),
-            cx.npm_package(),
-        )
+    // Network (version races) and local probing run side by side; the
+    // environment probe (`npm prefix -g`, `npm list -g`, `pnpm bin -g`,
+    // `yarn global bin`) happens once and is shared by both tools.
+    let ((cc_latest, cc_stable, cx_latest, cx_stable), (cc_installations, cx_installations)) = tokio::join!(
+        async {
+            tokio::join!(
+                fetch_channel_version(state, &cc, "latest"),
+                fetch_channel_version(state, &cc, "stable"),
+                fetch_channel_version(state, &cx, "latest"),
+                fetch_channel_version(state, &cx, "stable"),
+            )
+        },
+        async {
+            let env = install_diagnostics::probe_env().await;
+            tokio::join!(
+                install_diagnostics::diagnose_with(
+                    &env,
+                    "claude",
+                    native_launcher_path(&cc, "claude"),
+                    cc.launcher_dir(),
+                    cc.npm_package(),
+                ),
+                install_diagnostics::diagnose_with(
+                    &env,
+                    "codex",
+                    native_launcher_path(&cx, "codex"),
+                    cx.launcher_dir(),
+                    cx.npm_package(),
+                ),
+            )
+        }
     );
 
     let (cc_latest, cc_latest_stale) = cc_latest;
@@ -104,7 +169,9 @@ pub async fn list_tools(state: &AppState) -> Result<Vec<ToolDescriptor>> {
     let (cx_stable, cx_falls_back, cx_stable_stale) =
         resolve_stable(cx_stable_raw, cx_stable_stale_raw, &cx_latest, cx_latest_stale);
 
-    cd.installed_version = cc_installed.or_else(|| installed_from(&cc_installations));
+    // `installed_version` comes from the diagnosis (which already ran
+    // `--version` on every candidate) instead of a second detect pass.
+    cd.installed_version = installed_from(&cc_installations);
     cd.latest_version = cc_latest;
     cd.latest_version_stale = cc_latest_stale;
     cd.stable_version = cc_stable;
@@ -112,7 +179,7 @@ pub async fn list_tools(state: &AppState) -> Result<Vec<ToolDescriptor>> {
     cd.stable_falls_back_to_latest = cc_falls_back;
     cd.installations = cc_installations;
 
-    xd.installed_version = cx_installed.or_else(|| installed_from(&cx_installations));
+    xd.installed_version = installed_from(&cx_installations);
     xd.latest_version = cx_latest;
     xd.latest_version_stale = cx_latest_stale;
     xd.stable_version = cx_stable;
@@ -120,16 +187,17 @@ pub async fn list_tools(state: &AppState) -> Result<Vec<ToolDescriptor>> {
     xd.stable_falls_back_to_latest = cx_falls_back;
     xd.installations = cx_installations;
 
-    Ok(vec![cd, xd])
+    vec![cd, xd]
 }
 
-/// `Tool::detect_installed` 通过 `where`/`command -v` 跑 --version；遇到桌面进程
-/// PATH 不全或 .cmd shim 解析失败时会返空。诊断流程已经扫到了 install，就以
-/// 「current_path → 任一带版本号」的优先级反推一个版本号填进顶部"已安装"。
+/// 从诊断结果推导顶部"已安装"版本，优先级与原 `Tool::detect_installed` 一致：
+/// 应用自管的 native launcher → `where`/`command -v` 当前命中项（current_path）
+/// → 任一带版本号的安装。桌面进程 PATH 不全或 .cmd shim 解析失败时，后两级兜底。
 fn installed_from(installs: &[install_diagnostics::ToolInstallation]) -> Option<String> {
     installs
         .iter()
-        .find(|i| i.current_path && i.version.is_some())
+        .find(|i| i.source == InstallationSource::Native && i.managed && i.version.is_some())
+        .or_else(|| installs.iter().find(|i| i.current_path && i.version.is_some()))
         .or_else(|| installs.iter().find(|i| i.version.is_some()))
         .and_then(|i| i.version.clone())
 }
@@ -158,16 +226,18 @@ pub async fn install_tool(
     match tool_id {
         ClaudeCode::ID => {
             let mirrors = filter_mirrors(ClaudeCode.mirror_list(), mirror.as_deref())?;
-            let channel = install_channel(&client, &ClaudeCode, requested_channel).await;
+            let (channel, version) =
+                resolve_install_version(state, &ClaudeCode, requested_channel, &mirrors).await?;
             ClaudeCode
-                .install(method, progress, client, mirrors, channel)
+                .install_version(method, progress, client, mirrors, channel, version)
                 .await
         }
         CodexCli::ID => {
             let mirrors = filter_mirrors(CodexCli.mirror_list(), mirror.as_deref())?;
-            let channel = install_channel(&client, &CodexCli, requested_channel).await;
+            let (channel, version) =
+                resolve_install_version(state, &CodexCli, requested_channel, &mirrors).await?;
             CodexCli
-                .install(method, progress, client, mirrors, channel)
+                .install_version(method, progress, client, mirrors, channel, version)
                 .await
         }
         other => Err(AppError::Other(format!("unknown tool: {}", other))),
@@ -256,26 +326,58 @@ pub fn open_path(path: &str) -> Result<()> {
     open_path_with_system(&canonical)
 }
 
+/// The path is canonical and absolute, so `open` / `xdg-open` can't mistake
+/// it for an option. On Windows we avoid `cmd /c start`, whose parser
+/// interprets `&`, `^`, `%` in the path; `explorer.exe` takes the path as a
+/// plain argument but doesn't understand the verbatim prefix that
+/// `canonicalize` adds, so that's stripped first.
 fn open_path_with_system(path: &std::path::Path) -> Result<()> {
     #[cfg(target_os = "windows")]
-    {
-        let mut cmd = std::process::Command::new("cmd");
-        cmd.args(["/c", "start", ""]).arg(path);
+    let mut cmd = {
+        let mut cmd = std::process::Command::new("explorer.exe");
+        cmd.arg(strip_verbatim_prefix(path));
         crate::proc::silence_windows_std(&mut cmd);
-        cmd.spawn()?;
-        return Ok(());
-    }
+        cmd
+    };
 
     #[cfg(target_os = "macos")]
-    {
-        std::process::Command::new("open").arg(path).spawn()?;
-        return Ok(());
-    }
+    let mut cmd = {
+        let mut cmd = std::process::Command::new("open");
+        cmd.arg(path);
+        cmd
+    };
 
     #[cfg(all(unix, not(target_os = "macos")))]
-    {
-        std::process::Command::new("xdg-open").arg(path).spawn()?;
-        return Ok(());
+    let mut cmd = {
+        let mut cmd = std::process::Command::new("xdg-open");
+        cmd.arg(path);
+        cmd
+    };
+
+    let mut child = cmd.spawn()?;
+    // Reap the launcher so it doesn't linger as a zombie.
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
+    Ok(())
+}
+
+/// Turn a verbatim `\\?\X:\...` path into `X:\...` and `\\?\UNC\srv\share`
+/// into `\\srv\share` (what `dunce::simplified` does, minus the dependency).
+/// Other verbatim forms have no plain spelling and are returned unchanged.
+#[cfg(any(windows, test))]
+fn strip_verbatim_prefix(path: &std::path::Path) -> PathBuf {
+    const VERBATIM: &str = "\\\\?\\";
+    const VERBATIM_UNC: &str = "\\\\?\\UNC\\";
+    let Some(s) = path.to_str() else {
+        return path.to_path_buf();
+    };
+    if let Some(rest) = s.strip_prefix(VERBATIM_UNC) {
+        return PathBuf::from(format!("\\\\{}", rest));
+    }
+    match s.strip_prefix(VERBATIM) {
+        Some(rest) if rest.as_bytes().get(1) == Some(&b':') => PathBuf::from(rest),
+        _ => path.to_path_buf(),
     }
 }
 
@@ -314,25 +416,30 @@ fn resolve_stable(
 /// on-disk fallback cache rather than a fresh mirror response; the UI uses
 /// this to label the button with a "缓存" suffix. When even the cache is
 /// empty, returns `(None, false)` and the UI shifts the button into its
-/// destructive retry state.
+/// destructive retry state. Fresh results are memoized for
+/// [`VERSION_MEMO_TTL`].
 async fn fetch_channel_version<T: Tool>(
-    client: &reqwest::Client,
+    state: &AppState,
     tool: &T,
     channel: &str,
 ) -> (Option<String>, bool) {
+    let tool_id = tool.id();
+    if let Some(v) = state.memo_get(tool_id, channel) {
+        return (Some(v), false);
+    }
     let mirrors = tool.mirror_list();
     // fetch_version itself has a PER_MIRROR_TIMEOUT (8s) ceiling on each
     // racer, so the whole call bottoms out at ~8s worst-case. No need for
     // an outer wrapper timeout (pre-v0.5 we had Duration::from_secs(10)
     // here as a guard against the old sequential-loop fetch_version).
-    let fresh = mirrors::fetch_version(client, &mirrors, channel)
+    let fresh = mirrors::fetch_version(&state.client, &mirrors, channel)
         .await
         .ok()
         .map(|(_, version)| version);
 
-    let tool_id = tool.id();
     match fresh {
         Some(v) => {
+            state.memo_put(tool_id, channel, &v);
             version_cache::record(tool_id, channel, &v);
             (Some(v), false)
         }
@@ -360,24 +467,143 @@ fn native_launcher_path<T: Tool>(tool: &T, command_name: &str) -> Option<PathBuf
     Some(tool.launcher_dir()?.join(file_name))
 }
 
-async fn install_channel<T: Tool>(client: &reqwest::Client, tool: &T, channel: String) -> String {
-    // Treat a cached stable version (stale=true) as "stable exists" — the
-    // actual binary fetch downstream will hit the mirror chain itself and
-    // surface AllMirrorsFailed if the network is still down. Better to honor
-    // the user's stable pick than to silently jump to latest.
-    if channel != "stable"
-        || fetch_channel_version(client, tool, "stable")
+/// Decide the channel and the exact version to install, looking the version
+/// up only once (a fresh memo from the preceding list refresh is reused).
+///
+/// Treat a cached stable version (stale=true) as "stable exists" — the
+/// actual binary fetch downstream will hit the mirror chain itself and
+/// surface AllMirrorsFailed if the network is still down. Better to honor
+/// the user's stable pick than to silently jump to latest. A stale cache
+/// entry is never used as the install version itself; that still needs a
+/// fresh answer from the (possibly user-pinned) mirrors.
+async fn resolve_install_version<T: Tool>(
+    state: &AppState,
+    tool: &T,
+    channel: String,
+    mirrors: &MirrorList,
+) -> Result<(String, String)> {
+    let channel = if channel == "stable"
+        && fetch_channel_version(state, tool, "stable")
             .await
             .0
-            .is_some()
+            .is_none()
     {
-        return channel;
+        "latest".to_string()
+    } else {
+        channel
+    };
+    if let Some(v) = state.memo_get(tool.id(), &channel) {
+        tracing::info!("{} {} -> {} (memoized)", tool.id(), channel, v);
+        return Ok((channel, v));
     }
-    "latest".to_string()
+    let (_, version) = mirrors::fetch_version(&state.client, mirrors, &channel).await?;
+    tracing::info!("{} resolved {} -> {}", tool.id(), channel, version);
+    state.memo_put(tool.id(), &channel, &version);
+    version_cache::record(tool.id(), &channel, &version);
+    Ok((channel, version))
 }
 
 /// Helper for Tauri / Axum shells to wrap their Arc-based state without each
 /// having to know how the inner type is constructed.
 pub fn shared() -> Arc<AppState> {
     Arc::new(AppState::new())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::install_diagnostics::ToolInstallation;
+
+    fn inst(source: InstallationSource, version: &str, current: bool, managed: bool) -> ToolInstallation {
+        ToolInstallation {
+            source,
+            version: Some(version.to_string()),
+            path: None,
+            current_path: current,
+            on_path: current,
+            managed,
+        }
+    }
+
+    #[test]
+    fn installed_version_prefers_managed_native() {
+        let installs = vec![
+            inst(InstallationSource::NpmGlobal, "1.0.0", true, false),
+            inst(InstallationSource::Native, "2.0.0", false, true),
+        ];
+        assert_eq!(installed_from(&installs).as_deref(), Some("2.0.0"));
+        let installs = vec![
+            inst(InstallationSource::Nvm, "0.9.0", false, false),
+            inst(InstallationSource::NpmGlobal, "1.0.0", true, false),
+        ];
+        assert_eq!(installed_from(&installs).as_deref(), Some("1.0.0"));
+        assert_eq!(installed_from(&[]), None);
+    }
+
+    #[test]
+    fn strips_verbatim_prefixes() {
+        let bs = "\\";
+        let drive = format!("C:{bs}Users{bs}a b{bs}x.json");
+        let verbatim = format!("{bs}{bs}?{bs}{drive}");
+        assert_eq!(strip_verbatim_prefix(std::path::Path::new(&verbatim)), PathBuf::from(&drive));
+
+        let unc = format!("{bs}{bs}?{bs}UNC{bs}srv{bs}share{bs}x.json");
+        assert_eq!(
+            strip_verbatim_prefix(std::path::Path::new(&unc)),
+            PathBuf::from(format!("{bs}{bs}srv{bs}share{bs}x.json"))
+        );
+
+        assert_eq!(strip_verbatim_prefix(std::path::Path::new(&drive)), PathBuf::from(&drive));
+        let volume = format!("{bs}{bs}?{bs}Volume{{abc}}{bs}x.json");
+        assert_eq!(strip_verbatim_prefix(std::path::Path::new(&volume)), PathBuf::from(&volume));
+    }
+
+    #[test]
+    fn version_memo_expires() {
+        let state = AppState::with_client(reqwest::Client::new());
+        state.memo_put("t", "latest", "1.2.3");
+        assert_eq!(state.memo_get("t", "latest").as_deref(), Some("1.2.3"));
+        assert_eq!(state.memo_get("t", "stable"), None);
+        state.version_memo.lock().unwrap().insert(
+            ("t".into(), "latest".into()),
+            ("1.2.3".into(), Instant::now() - VERSION_MEMO_TTL - Duration::from_secs(1)),
+        );
+        assert_eq!(state.memo_get("t", "latest"), None);
+    }
+
+    fn assert_send<T: Send>(_: &T) {}
+
+    /// axum handlers and tauri commands need `Send` futures; a borrowed
+    /// iterator held across `.await` once broke installer-web's build.
+    #[test]
+    fn service_futures_are_send() {
+        let state = AppState::with_client(reqwest::Client::new());
+        let install = install_tool(
+            &state,
+            crate::progress::noop_progress(),
+            ClaudeCode::ID,
+            None,
+            None,
+            None,
+        );
+        assert_send(&install);
+        assert_send(&list_tools(&state));
+        assert_send(&apply_fixes(&state, &[]));
+        assert_send(&add_to_path(ClaudeCode::ID, PathScope::User));
+    }
+
+    #[tokio::test]
+    async fn list_tools_serves_cache_while_an_operation_runs() {
+        let state = AppState::with_client(reqwest::Client::new());
+        let mut cached = ClaudeCode.descriptor();
+        cached.installed_version = Some("9.9.9".into());
+        *state.tools_cache.lock().unwrap() = Some(vec![cached]);
+
+        let _busy = state.tool_operations.lock().await;
+        let tools = tokio::time::timeout(Duration::from_secs(2), list_tools(&state))
+            .await
+            .expect("must not wait for the operation lock")
+            .unwrap();
+        assert_eq!(tools[0].installed_version.as_deref(), Some("9.9.9"));
+    }
 }

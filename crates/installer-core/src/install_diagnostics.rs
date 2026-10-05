@@ -3,7 +3,7 @@ use serde_json::Value;
 use std::path::{Path, PathBuf};
 
 use crate::npm_installer;
-use crate::proc::{resolve_command_path, run_executable, shell_command};
+use crate::proc::{output_with_timeout, resolve_command_path, run_executable, shell_command, PROBE_TIMEOUT};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -29,7 +29,65 @@ pub struct ToolInstallation {
     pub managed: bool,
 }
 
+/// 与具体工具无关的环境探测结果。一次刷新只跑一遍（`npm prefix -g`、
+/// `npm list -g`、`pnpm bin -g`、`yarn global bin` 各一次），多个工具共享，
+/// 而不是每个工具各起一轮子进程。
+#[derive(Debug, Clone, Default)]
+pub struct EnvProbe {
+    npm_global_bin: Option<PathBuf>,
+    /// `npm list -g --json --depth=0` 的输出（含所有全局包）
+    npm_global_packages: Option<Value>,
+    pkg_manager_bins: Vec<(InstallationSource, PathBuf)>,
+}
+
+/// 并发执行所有环境探测命令。
+pub async fn probe_env() -> EnvProbe {
+    let (npm_bin, npm_list, pnpm, yarn, bun) = tokio::join!(
+        npm_installer::npm_global_bin(),
+        npm_list_global(),
+        run_path_command("pnpm", &["bin", "-g"]),
+        run_path_command("yarn", &["global", "bin"]),
+        bun_global_bin(),
+    );
+    let mut pkg_manager_bins = Vec::new();
+    if let Some(p) = pnpm {
+        pkg_manager_bins.push((InstallationSource::Pnpm, p));
+    }
+    if let Some(p) = yarn {
+        pkg_manager_bins.push((InstallationSource::Yarn, p));
+    }
+    if let Some(p) = bun {
+        pkg_manager_bins.push((InstallationSource::Bun, p));
+    }
+    EnvProbe {
+        npm_global_bin: npm_bin.ok().map(PathBuf::from),
+        npm_global_packages: npm_list,
+        pkg_manager_bins,
+    }
+}
+
+async fn npm_list_global() -> Option<Value> {
+    let mut cmd = shell_command("npm");
+    cmd.args(["list", "-g", "--json", "--depth=0"]);
+    // 有 extraneous / invalid 包时 npm 以非 0 退出但仍输出 JSON，所以不看退出码。
+    let output = output_with_timeout(&mut cmd, PROBE_TIMEOUT).await.ok()?;
+    serde_json::from_slice(&output.stdout).ok()
+}
+
+/// 兼容入口：自己做一次环境探测再诊断。刷新多个工具时请先 [`probe_env`]
+/// 再对每个工具调用 [`diagnose_with`]。
 pub async fn diagnose(
+    command_name: &str,
+    native_path: Option<PathBuf>,
+    managed_dir: Option<PathBuf>,
+    npm_package: Option<&str>,
+) -> Vec<ToolInstallation> {
+    let env = probe_env().await;
+    diagnose_with(&env, command_name, native_path, managed_dir, npm_package).await
+}
+
+pub async fn diagnose_with(
+    env: &EnvProbe,
     command_name: &str,
     native_path: Option<PathBuf>,
     managed_dir: Option<PathBuf>,
@@ -53,7 +111,7 @@ pub async fn diagnose(
 
     // 2) npm 全局（含 nvm 当前激活版本）
     if let Some(package) = npm_package {
-        if let Some(mut npm_install) = detect_npm_global(command_name, package).await {
+        if let Some(mut npm_install) = detect_npm_global(env, command_name, package).await {
             npm_install.managed = managed_dir
                 .as_ref()
                 .and_then(|dir| {
@@ -67,47 +125,72 @@ pub async fn diagnose(
         }
     }
 
-    // 3) pnpm / yarn / bun 全局
-    for (source, bin_dir) in pnpm_yarn_bun_bins().await {
-        if let Some(install) = detect_via_bin_dir(&bin_dir, command_name, source).await {
-            push_unique(&mut installs, install);
-        }
+    // 3) pnpm / yarn / bun 全局 + 4) nvm（含未激活的版本）：各候选的
+    //    `--version` 并发执行
+    let mut candidates: Vec<(InstallationSource, PathBuf)> = env
+        .pkg_manager_bins
+        .iter()
+        .filter_map(|(source, bin_dir)| {
+            find_in_bin_dir(bin_dir, command_name).map(|path| (*source, path))
+        })
+        .collect();
+    candidates.extend(
+        nvm_candidates(command_name)
+            .into_iter()
+            .map(|p| (InstallationSource::Nvm, p)),
+    );
+    let versions = futures_util::future::join_all(
+        candidates
+            .iter()
+            .map(|(_, path)| run_version(path, command_name)),
+    )
+    .await;
+    for ((source, path), version) in candidates.into_iter().zip(versions) {
+        push_unique(
+            &mut installs,
+            ToolInstallation {
+                source,
+                version,
+                path: Some(path.to_string_lossy().to_string()),
+                current_path: false,
+                on_path: false,
+                managed: false,
+            },
+        );
     }
 
-    // 4) nvm（含未激活的版本）
-    for install in detect_nvm(command_name).await {
-        push_unique(&mut installs, install);
-    }
-
-    // 5) PATH 解析
+    // 5) PATH 解析。已经诊断过的同一文件不再重复跑 --version。
     let resolved = resolve_command_path(command_name).await;
     if let Some(path) = resolved.as_deref() {
         let path_str = path.to_string_lossy().to_string();
-        let path_version = run_executable(path, &["--version"])
-            .await
-            .and_then(|s| parse_version(command_name, &s));
-        if let Some(existing) = installs.iter_mut().find(|install| {
+        let existing = installs.iter_mut().find(|install| {
             install
                 .path
                 .as_deref()
                 .is_some_and(|p| same_path(p, &path_str))
-        }) {
-            existing.current_path = true;
-            if existing.version.is_none() {
-                existing.version = path_version.clone();
+        });
+        match existing {
+            Some(existing) => {
+                existing.current_path = true;
+                if existing.version.is_none() {
+                    existing.version = run_version(path, command_name).await;
+                }
             }
-        } else if let Some(version) = path_version.clone() {
-            installs.push(ToolInstallation {
-                source: InstallationSource::Path,
-                version: Some(version),
-                managed: managed_dir
-                    .as_ref()
-                    .map(|dir| path_starts_with(&path_str, dir))
-                    .unwrap_or(false),
-                path: Some(path_str),
-                current_path: true,
-                on_path: true,
-            });
+            None => {
+                if let Some(version) = run_version(path, command_name).await {
+                    installs.push(ToolInstallation {
+                        source: InstallationSource::Path,
+                        version: Some(version),
+                        managed: managed_dir
+                            .as_ref()
+                            .map(|dir| path_starts_with(&path_str, dir))
+                            .unwrap_or(false),
+                        path: Some(path_str),
+                        current_path: true,
+                        on_path: true,
+                    });
+                }
+            }
         }
     }
 
@@ -141,28 +224,24 @@ pub async fn diagnose(
     installs
 }
 
-async fn detect_npm_global(command_name: &str, package: &str) -> Option<ToolInstallation> {
+async fn detect_npm_global(
+    env: &EnvProbe,
+    command_name: &str,
+    package: &str,
+) -> Option<ToolInstallation> {
     // 先用 `npm list -g`（拿权威版本号）
-    let mut version = None;
-    if let Ok(output) = shell_command("npm")
-        .args(["list", "-g", package, "--json", "--depth=0"])
-        .output()
-        .await
-    {
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        if let Ok(parsed) = serde_json::from_str::<Value>(&stdout) {
-            version = parsed
-                .pointer(&format!(
-                    "/dependencies/{}/version",
-                    escape_json_pointer(package)
-                ))
-                .and_then(Value::as_str)
-                .map(String::from);
-        }
-    }
+    let mut version = env.npm_global_packages.as_ref().and_then(|parsed| {
+        parsed
+            .pointer(&format!(
+                "/dependencies/{}/version",
+                escape_json_pointer(package)
+            ))
+            .and_then(Value::as_str)
+            .map(String::from)
+    });
 
     // 找 bin 路径：优先 `npm prefix -g`，失败则扫常见 npm 全局目录
-    let bin_path = npm_global_bin_path(command_name).await;
+    let bin_path = npm_global_bin_path(env, command_name);
 
     // 都找不到才放弃
     if version.is_none() && bin_path.is_none() {
@@ -176,11 +255,6 @@ async fn detect_npm_global(command_name: &str, package: &str) -> Option<ToolInst
         }
     }
 
-    // 仍然啥也没有就别报这一项
-    if version.is_none() && bin_path.is_none() {
-        return None;
-    }
-
     Some(ToolInstallation {
         source: InstallationSource::NpmGlobal,
         version,
@@ -191,26 +265,18 @@ async fn detect_npm_global(command_name: &str, package: &str) -> Option<ToolInst
     })
 }
 
-async fn npm_global_bin_path(command_name: &str) -> Option<PathBuf> {
-    if let Ok(bin) = npm_installer::npm_global_bin().await {
-        let dir = PathBuf::from(bin);
-        for cand in executable_candidates(command_name) {
-            let p = dir.join(&cand);
-            if p.exists() {
-                return Some(p);
-            }
-        }
+fn npm_global_bin_path(env: &EnvProbe, command_name: &str) -> Option<PathBuf> {
+    if let Some(p) = env
+        .npm_global_bin
+        .as_deref()
+        .and_then(|dir| find_in_bin_dir(dir, command_name))
+    {
+        return Some(p);
     }
     // Fallback：扫已知 npm 全局 bin 目录
-    for dir in well_known_npm_dirs() {
-        for cand in executable_candidates(command_name) {
-            let p = dir.join(&cand);
-            if p.exists() {
-                return Some(p);
-            }
-        }
-    }
-    None
+    well_known_npm_dirs()
+        .iter()
+        .find_map(|dir| find_in_bin_dir(dir, command_name))
 }
 
 fn well_known_npm_dirs() -> Vec<PathBuf> {
@@ -234,43 +300,15 @@ fn well_known_npm_dirs() -> Vec<PathBuf> {
     out
 }
 
-async fn detect_via_bin_dir(
-    bin_dir: &Path,
-    command_name: &str,
-    source: InstallationSource,
-) -> Option<ToolInstallation> {
+/// 在 `bin_dir` 中找 `command_name` 的第一个可执行候选（Windows 含 .cmd/.exe/.ps1）。
+fn find_in_bin_dir(bin_dir: &Path, command_name: &str) -> Option<PathBuf> {
     if !bin_dir.exists() {
         return None;
     }
-    for cand in executable_candidates(command_name) {
-        let path = bin_dir.join(&cand);
-        if path.exists() {
-            let version = run_version(&path, command_name).await;
-            return Some(ToolInstallation {
-                source,
-                version,
-                path: Some(path.to_string_lossy().to_string()),
-                current_path: false,
-                on_path: false,
-                managed: false,
-            });
-        }
-    }
-    None
-}
-
-async fn pnpm_yarn_bun_bins() -> Vec<(InstallationSource, PathBuf)> {
-    let mut out = Vec::new();
-    if let Some(p) = run_path_command("pnpm", &["bin", "-g"]).await {
-        out.push((InstallationSource::Pnpm, p));
-    }
-    if let Some(p) = run_path_command("yarn", &["global", "bin"]).await {
-        out.push((InstallationSource::Yarn, p));
-    }
-    if let Some(p) = bun_global_bin().await {
-        out.push((InstallationSource::Bun, p));
-    }
-    out
+    executable_candidates(command_name)
+        .into_iter()
+        .map(|cand| bin_dir.join(cand))
+        .find(|p| p.exists())
 }
 
 async fn bun_global_bin() -> Option<PathBuf> {
@@ -289,7 +327,9 @@ async fn bun_global_bin() -> Option<PathBuf> {
 }
 
 async fn run_path_command(program: &str, args: &[&str]) -> Option<PathBuf> {
-    let output = shell_command(program).args(args).output().await.ok()?;
+    let mut cmd = shell_command(program);
+    cmd.args(args);
+    let output = output_with_timeout(&mut cmd, PROBE_TIMEOUT).await.ok()?;
     if !output.status.success() {
         return None;
     }
@@ -305,7 +345,8 @@ async fn run_path_command(program: &str, args: &[&str]) -> Option<PathBuf> {
     }
 }
 
-async fn detect_nvm(command_name: &str) -> Vec<ToolInstallation> {
+/// nvm 管理的各 Node 版本目录里的 `command_name`（含未激活的版本）。
+fn nvm_candidates(command_name: &str) -> Vec<PathBuf> {
     let mut out = Vec::new();
 
     // Unix nvm: ~/.nvm/versions/node/<v>/bin/<cmd>
@@ -315,15 +356,7 @@ async fn detect_nvm(command_name: &str) -> Vec<ToolInstallation> {
             for e in entries.flatten() {
                 let bin_path = e.path().join("bin").join(command_name);
                 if bin_path.exists() {
-                    let version = run_version(&bin_path, command_name).await;
-                    out.push(ToolInstallation {
-                        source: InstallationSource::Nvm,
-                        version,
-                        path: Some(bin_path.to_string_lossy().to_string()),
-                        current_path: false,
-                        on_path: false,
-                        managed: false,
-                    });
+                    out.push(bin_path);
                 }
             }
         }
@@ -343,20 +376,8 @@ async fn detect_nvm(command_name: &str) -> Vec<ToolInstallation> {
                     if !name.starts_with('v') {
                         continue;
                     }
-                    for cand in executable_candidates(command_name) {
-                        let bin_path = dir.join(&cand);
-                        if bin_path.exists() {
-                            let version = run_version(&bin_path, command_name).await;
-                            out.push(ToolInstallation {
-                                source: InstallationSource::Nvm,
-                                version,
-                                path: Some(bin_path.to_string_lossy().to_string()),
-                                current_path: false,
-                                on_path: false,
-                                managed: false,
-                            });
-                            break;
-                        }
+                    if let Some(bin_path) = find_in_bin_dir(&dir, command_name) {
+                        out.push(bin_path);
                     }
                 }
             }
@@ -459,8 +480,8 @@ fn same_path_buf(a: &Path, b: &Path) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_version, path_starts_with};
-    use std::path::Path;
+    use super::*;
+    use serde_json::json;
 
     #[cfg(target_os = "windows")]
     #[test]
@@ -522,5 +543,29 @@ mod tests {
             parse_version("codex", "0.128.0\n"),
             Some("0.128.0".to_string())
         );
+    }
+
+    #[tokio::test]
+    async fn npm_version_comes_from_shared_probe() {
+        // One `npm list -g` output serves every package.
+        let env = EnvProbe {
+            npm_global_bin: None,
+            npm_global_packages: Some(json!({
+                "dependencies": {
+                    "@anthropic-ai/claude-code": { "version": "2.1.0" },
+                    "@openai/codex": { "version": "0.160.0" }
+                }
+            })),
+            pkg_manager_bins: vec![],
+        };
+        let cc = detect_npm_global(&env, "claude-nonexistent-cmd", "@anthropic-ai/claude-code")
+            .await
+            .unwrap();
+        assert_eq!(cc.version.as_deref(), Some("2.1.0"));
+        let cx = detect_npm_global(&env, "codex-nonexistent-cmd", "@openai/codex")
+            .await
+            .unwrap();
+        assert_eq!(cx.version.as_deref(), Some("0.160.0"));
+        assert!(detect_npm_global(&env, "nope-nonexistent-cmd", "nope").await.is_none());
     }
 }

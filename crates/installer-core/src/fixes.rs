@@ -16,8 +16,20 @@
 //! That way adding/editing fixes is just: edit `fixes.json` on `main`, push,
 //! and existing app installs see the new list on next launch — no release
 //! required.
+//!
+//! ## Remote payloads are untrusted (v0.5.4+)
+//!
+//! The remote copy travels through third-party GH proxies, so it can be
+//! tampered with. A remote fix is kept only if every patch passes
+//! [`remote_patch_allowed`]: its target file + JSON path must already exist
+//! in the embedded copy, and keys that can execute code or redirect traffic
+//! (`env`, `permissions`, `hooks`, `apiKeyHelper`, `mcpServers`, …) may only
+//! carry the exact embedded value. Anything else is dropped with a warning.
+//! The post-install auto-apply ([`apply_builtin_selected`]) never looks at
+//! the remote copy at all.
 
 use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{LazyLock, Mutex};
 use std::time::Duration;
@@ -35,9 +47,32 @@ const FIXES_REMOTE_URLS: &[&str] = &[
     "https://github.chenc.dev/https://raw.githubusercontent.com/zuoliangyu/ai-cli-installer/main/crates/installer-core/fixes.json",
 ];
 
+/// Top-level keys whose *value* decides what code runs or where traffic
+/// goes. A remote fix may touch them only with the exact embedded value.
+const SENSITIVE_KEYS: &[&str] = &[
+    "env",
+    "permissions",
+    "hooks",
+    "apiKeyHelper",
+    "mcpServers",
+    "enabledMcpjsonServers",
+    "statusLine",
+    "otelHeadersHelper",
+    "awsAuthRefresh",
+    "awsCredentialExport",
+    "enabledPlugins",
+    "extraKnownMarketplaces",
+    "forceLoginMethod",
+    "model",
+    "projects",
+    "oauthAccount",
+    "primaryApiKey",
+    "customApiKeyResponses",
+];
+
 static FIXES_CACHE: LazyLock<Mutex<Option<Vec<Fix>>>> = LazyLock::new(|| Mutex::new(None));
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum TargetFile {
     /// `~/.claude/settings.json` — main Claude Code settings.
@@ -95,6 +130,8 @@ struct FixesFile {
 }
 
 /// Try remote URLs in order, fall back to the build-time embedded JSON.
+///
+/// Only fails if the embedded copy itself doesn't parse (a build bug).
 pub async fn list_fixes(client: &reqwest::Client) -> Result<Vec<Fix>> {
     if let Some(mut fixes) = cached_fixes() {
         annotate_config_status(&mut fixes);
@@ -112,7 +149,7 @@ pub async fn list_fixes(client: &reqwest::Client) -> Result<Vec<Fix>> {
                     "embedded fallback (remote stale)"
                 };
                 let mut fixes = if use_remote {
-                    remote.fixes
+                    sanitize_remote_fixes(remote.fixes, &embedded.fixes)
                 } else {
                     embedded.fixes.clone()
                 };
@@ -143,7 +180,7 @@ async fn fetch_remote(client: &reqwest::Client, url: &str) -> Result<FixesFile> 
         .send()
         .await?
         .error_for_status()?;
-    let bytes = resp.bytes().await?;
+    let bytes = crate::upstream::read_capped(resp, crate::upstream::MAX_METADATA_BYTES).await?;
     let parsed: FixesFile = serde_json::from_slice(&bytes)
         .map_err(|e| AppError::Other(format!("remote fixes.json invalid: {}", e)))?;
     Ok(parsed)
@@ -153,14 +190,6 @@ fn parse_embedded_file() -> Result<FixesFile> {
     let parsed: FixesFile = serde_json::from_str(FIXES_JSON)
         .map_err(|e| AppError::Other(format!("embedded fixes.json invalid: {}", e)))?;
     Ok(parsed)
-}
-
-/// Sync helper that only reads the embedded copy. Used by `apply_selected`
-/// (which needs to look up fix definitions by id without making a network
-/// call mid-apply). Future enhancement: cache last-good remote payload on
-/// disk so apply_selected sees the fresh definitions too.
-fn list_fixes_embedded() -> Result<Vec<Fix>> {
-    Ok(parse_embedded_file()?.fixes)
 }
 
 fn cached_fixes() -> Option<Vec<Fix>> {
@@ -182,12 +211,73 @@ fn remote_is_fresh_enough(remote: &FixesFile, embedded: &FixesFile) -> bool {
     }
 }
 
+/// Drop every remote fix that has at least one patch failing
+/// [`remote_patch_allowed`] (or no patches at all).
+fn sanitize_remote_fixes(remote: Vec<Fix>, embedded: &[Fix]) -> Vec<Fix> {
+    let known: Vec<&Patch> = embedded.iter().flat_map(|f| f.patches.iter()).collect();
+    remote
+        .into_iter()
+        .filter(|fix| {
+            if fix.patches.is_empty() {
+                tracing::warn!("dropping remote fix {}: no patches", fix.id);
+                return false;
+            }
+            match fix.patches.iter().find(|p| !remote_patch_allowed(p, &known)) {
+                Some(p) => {
+                    tracing::warn!(
+                        "dropping remote fix {}: patch {:?}:{} is not allowed for remote definitions",
+                        fix.id,
+                        p.target,
+                        p.path
+                    );
+                    false
+                }
+                None => true,
+            }
+        })
+        .collect()
+}
+
+/// Remote patch policy:
+/// 1. `(target, path)` must appear in the embedded fixes — remote can
+///    re-describe or regroup known settings, never introduce new keys;
+/// 2. the value must be a JSON scalar of the same type as the embedded one;
+/// 3. under [`SENSITIVE_KEYS`] the value must equal an embedded value exactly.
+fn remote_patch_allowed(patch: &Patch, known: &[&Patch]) -> bool {
+    let same_slot: Vec<&&Patch> = known
+        .iter()
+        .filter(|k| k.target == patch.target && k.path == patch.path)
+        .collect();
+    if same_slot.is_empty() {
+        return false;
+    }
+    if patch.value.is_object() || patch.value.is_array() {
+        return false;
+    }
+    let top = patch.path.split('.').next().unwrap_or_default();
+    if SENSITIVE_KEYS.iter().any(|k| k.eq_ignore_ascii_case(top)) {
+        return same_slot.iter().any(|k| k.value == patch.value);
+    }
+    same_slot
+        .iter()
+        .any(|k| std::mem::discriminant(&k.value) == std::mem::discriminant(&patch.value))
+}
+
 fn annotate_config_status(fixes: &mut [Fix]) {
+    // Parse each target file once, not once per patch.
+    let mut roots: BTreeMap<TargetFile, Option<serde_json::Value>> = BTreeMap::new();
     for fix in fixes {
         let configured = fix
             .patches
             .iter()
-            .filter(|patch| patch_is_configured(patch))
+            .filter(|patch| {
+                let root = roots
+                    .entry(patch.target)
+                    .or_insert_with(|| read_target_json(patch.target));
+                root.as_ref().is_some_and(|root| {
+                    get_dotted(root, &patch.path).is_some_and(|current| current == &patch.value)
+                })
+            })
             .count();
         fix.total_patches = fix.patches.len();
         fix.configured_patches = configured;
@@ -195,17 +285,10 @@ fn annotate_config_status(fixes: &mut [Fix]) {
     }
 }
 
-fn patch_is_configured(patch: &Patch) -> bool {
-    let Ok(path) = patch.target.resolve() else {
-        return false;
-    };
-    let Ok(content) = std::fs::read_to_string(path) else {
-        return false;
-    };
-    let Ok(root) = serde_json::from_str::<serde_json::Value>(&content) else {
-        return false;
-    };
-    get_dotted(&root, &patch.path).is_some_and(|current| current == &patch.value)
+fn read_target_json(target: TargetFile) -> Option<serde_json::Value> {
+    let path = target.resolve().ok()?;
+    let content = std::fs::read_to_string(path).ok()?;
+    serde_json::from_str(&content).ok()
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -220,13 +303,22 @@ pub struct RemoveReport {
     pub touched_files: Vec<String>,
 }
 
+/// Apply user-selected fixes, using the same (sanitized remote / embedded)
+/// definitions the UI listed.
 pub async fn apply_selected(client: &reqwest::Client, fix_ids: &[String]) -> Result<ApplyReport> {
-    // Use the same loader as list_fixes so apply respects remote-edited
-    // definitions. Embedded fallback covers offline.
-    let all = match list_fixes(client).await {
-        Ok(v) => v,
-        Err(_) => list_fixes_embedded()?,
-    };
+    let all = list_fixes(client).await?;
+    apply_from(&all, fix_ids)
+}
+
+/// Apply fixes looked up **only** in the build-time embedded `fixes.json`.
+/// Used for the automatic post-install step, which must never act on a
+/// definition fetched over the network.
+pub fn apply_builtin_selected(fix_ids: &[String]) -> Result<ApplyReport> {
+    let all = parse_embedded_file()?.fixes;
+    apply_from(&all, fix_ids)
+}
+
+fn apply_from(all: &[Fix], fix_ids: &[String]) -> Result<ApplyReport> {
     let selected: Vec<&Fix> = all.iter().filter(|f| fix_ids.contains(&f.id)).collect();
     if selected.is_empty() {
         return Ok(ApplyReport {
@@ -235,17 +327,8 @@ pub async fn apply_selected(client: &reqwest::Client, fix_ids: &[String]) -> Res
         });
     }
 
-    // Group patches by target file so we read+write each file at most once.
-    let mut groups: std::collections::BTreeMap<TargetFile, Vec<&Patch>> =
-        std::collections::BTreeMap::new();
-    for fix in &selected {
-        for p in &fix.patches {
-            groups.entry(p.target).or_default().push(p);
-        }
-    }
-
     let mut touched = Vec::new();
-    for (target, patches) in groups {
+    for (target, patches) in group_by_target(&selected) {
         let path = target.resolve()?;
         apply_patches_to_file(&path, &patches)?;
         touched.push(path.to_string_lossy().to_string());
@@ -258,10 +341,7 @@ pub async fn apply_selected(client: &reqwest::Client, fix_ids: &[String]) -> Res
 }
 
 pub async fn remove_selected(client: &reqwest::Client, fix_ids: &[String]) -> Result<RemoveReport> {
-    let all = match list_fixes(client).await {
-        Ok(v) => v,
-        Err(_) => list_fixes_embedded()?,
-    };
+    let all = list_fixes(client).await?;
     let selected: Vec<&Fix> = all.iter().filter(|f| fix_ids.contains(&f.id)).collect();
     if selected.is_empty() {
         return Ok(RemoveReport {
@@ -270,17 +350,9 @@ pub async fn remove_selected(client: &reqwest::Client, fix_ids: &[String]) -> Re
         });
     }
 
-    let mut groups: std::collections::BTreeMap<TargetFile, Vec<&Patch>> =
-        std::collections::BTreeMap::new();
-    for fix in &selected {
-        for p in &fix.patches {
-            groups.entry(p.target).or_default().push(p);
-        }
-    }
-
     let mut touched = Vec::new();
     let mut removed_count = 0;
-    for (target, patches) in groups {
+    for (target, patches) in group_by_target(&selected) {
         let path = target.resolve()?;
         let removed = remove_patches_from_file(&path, &patches)?;
         if removed > 0 {
@@ -295,61 +367,71 @@ pub async fn remove_selected(client: &reqwest::Client, fix_ids: &[String]) -> Re
     })
 }
 
-fn apply_patches_to_file(path: &std::path::Path, patches: &[&Patch]) -> Result<()> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-
-    let mut root: serde_json::Value = if path.exists() {
-        let content = std::fs::read_to_string(path)?;
-        if content.trim().is_empty() {
-            serde_json::json!({})
-        } else {
-            serde_json::from_str(&content)
-                .map_err(|e| AppError::Other(format!("parse {}: {}", path.display(), e)))?
+/// Group patches by target file so we read+write each file at most once.
+fn group_by_target<'a>(selected: &[&'a Fix]) -> BTreeMap<TargetFile, Vec<&'a Patch>> {
+    let mut groups: BTreeMap<TargetFile, Vec<&Patch>> = BTreeMap::new();
+    let mut seen: HashSet<(TargetFile, &str)> = HashSet::new();
+    for fix in selected {
+        for p in &fix.patches {
+            if seen.insert((p.target, p.path.as_str())) {
+                groups.entry(p.target).or_default().push(p);
+            }
         }
-    } else {
-        serde_json::json!({})
-    };
-
-    for p in patches {
-        set_dotted(&mut root, &p.path, p.value.clone())?;
     }
+    groups
+}
 
-    let pretty = serde_json::to_string_pretty(&root)
-        .map_err(|e| AppError::Other(format!("serialize {}: {}", path.display(), e)))?;
-    crate::config_file::write_with_backup(path, pretty)?;
+fn parse_root(path: &std::path::Path, content: Option<&str>) -> Result<serde_json::Value> {
+    match content {
+        Some(c) if !c.trim().is_empty() => serde_json::from_str(c)
+            .map_err(|e| AppError::Other(format!("parse {}: {}", path.display(), e))),
+        _ => Ok(serde_json::json!({})),
+    }
+}
+
+fn serialize_root(path: &std::path::Path, root: &serde_json::Value) -> Result<Vec<u8>> {
+    serde_json::to_string_pretty(root)
+        .map(String::into_bytes)
+        .map_err(|e| AppError::Other(format!("serialize {}: {}", path.display(), e)))
+}
+
+/// Read-modify-write under the config lock; skipped entirely (no write, no
+/// backup) when every patch is already in place.
+fn apply_patches_to_file(path: &std::path::Path, patches: &[&Patch]) -> Result<()> {
+    crate::config_file::update_with_backup(path, |content| {
+        let original = parse_root(path, content)?;
+        let mut root = original.clone();
+        for p in patches {
+            set_dotted(&mut root, &p.path, p.value.clone())?;
+        }
+        if content.is_some() && root == original {
+            return Ok(None);
+        }
+        serialize_root(path, &root).map(Some)
+    })?;
     Ok(())
 }
 
 fn remove_patches_from_file(path: &std::path::Path, patches: &[&Patch]) -> Result<usize> {
-    if !path.exists() {
-        return Ok(0);
-    }
-
-    let content = std::fs::read_to_string(path)?;
-    if content.trim().is_empty() {
-        return Ok(0);
-    }
-
-    let mut root: serde_json::Value = serde_json::from_str(&content)
-        .map_err(|e| AppError::Other(format!("parse {}: {}", path.display(), e)))?;
-
     let mut removed = 0;
-    for patch in patches {
-        if get_dotted(&root, &patch.path).is_some_and(|current| current == &patch.value)
-            && remove_dotted(&mut root, &patch.path)
-        {
-            removed += 1;
+    crate::config_file::update_with_backup(path, |content| {
+        let Some(content) = content.filter(|c| !c.trim().is_empty()) else {
+            return Ok(None);
+        };
+        let mut root: serde_json::Value = serde_json::from_str(content)
+            .map_err(|e| AppError::Other(format!("parse {}: {}", path.display(), e)))?;
+        for patch in patches {
+            if get_dotted(&root, &patch.path).is_some_and(|current| current == &patch.value)
+                && remove_dotted(&mut root, &patch.path)
+            {
+                removed += 1;
+            }
         }
-    }
-
-    if removed > 0 {
-        let pretty = serde_json::to_string_pretty(&root)
-            .map_err(|e| AppError::Other(format!("serialize {}: {}", path.display(), e)))?;
-        crate::config_file::write_with_backup(path, pretty)?;
-    }
-
+        if removed == 0 {
+            return Ok(None);
+        }
+        serialize_root(path, &root).map(Some)
+    })?;
     Ok(removed)
 }
 
@@ -433,8 +515,9 @@ fn get_dotted_mut<'a>(
 #[cfg(test)]
 mod tests {
     use super::{
-        cache_fixes, cached_fixes, get_dotted, remote_is_fresh_enough, remove_dotted, set_dotted,
-        Fix, FixesFile, FIXES_CACHE,
+        cache_fixes, cached_fixes, get_dotted, parse_embedded_file, remote_is_fresh_enough,
+        remove_dotted, sanitize_remote_fixes, set_dotted, Fix, FixesFile, Patch, TargetFile,
+        FIXES_CACHE,
     };
     use serde_json::json;
 
@@ -444,6 +527,29 @@ mod tests {
             updated_at: updated_at.map(str::to_string),
             comment: None,
             fixes: vec![],
+        }
+    }
+
+    fn fix(id: &str, patches: Vec<Patch>) -> Fix {
+        Fix {
+            id: id.into(),
+            code: "CC-TEST".into(),
+            title: "Sample".into(),
+            description: "Sample fix".into(),
+            doc_url: None,
+            patches,
+            tags: vec![],
+            configured: false,
+            configured_patches: 0,
+            total_patches: 0,
+        }
+    }
+
+    fn patch(target: TargetFile, path: &str, value: serde_json::Value) -> Patch {
+        Patch {
+            target,
+            path: path.into(),
+            value,
         }
     }
 
@@ -496,21 +602,74 @@ mod tests {
     #[test]
     fn caches_fix_definitions() {
         *FIXES_CACHE.lock().unwrap() = None;
-        cache_fixes(&[Fix {
-            id: "sample".into(),
-            code: "CC-TEST".into(),
-            title: "Sample".into(),
-            description: "Sample fix".into(),
-            doc_url: None,
-            patches: vec![],
-            tags: vec![],
-            configured: true,
-            configured_patches: 1,
-            total_patches: 1,
-        }]);
+        let mut sample = fix("sample", vec![]);
+        sample.configured = true;
+        sample.configured_patches = 1;
+        sample.total_patches = 1;
+        cache_fixes(&[sample]);
 
         let cached = cached_fixes().expect("fixes should be cached");
         assert_eq!(cached.len(), 1);
         assert_eq!(cached[0].id, "sample");
+    }
+
+    #[test]
+    fn embedded_fixes_pass_the_remote_policy() {
+        // Re-serving the embedded file verbatim must keep every fix.
+        let embedded = parse_embedded_file().unwrap().fixes;
+        let kept = sanitize_remote_fixes(embedded.clone(), &embedded);
+        assert_eq!(kept.len(), embedded.len());
+    }
+
+    #[test]
+    fn remote_policy_rejects_dangerous_patches() {
+        use TargetFile::*;
+        let embedded = vec![
+            fix("telemetry", vec![patch(ClaudeSettings, "env.DISABLE_TELEMETRY", json!("1"))]),
+            fix("shell", vec![patch(ClaudeSettings, "defaultShell", json!("powershell"))]),
+            fix("onboarding", vec![patch(ClaudeJson, "hasCompletedOnboarding", json!(true))]),
+        ];
+        let remote = vec![
+            // Same slot, same value, new wording: kept.
+            fix("telemetry", vec![patch(ClaudeSettings, "env.DISABLE_TELEMETRY", json!("1"))]),
+            // Non-sensitive key, same type: kept.
+            fix("shell2", vec![patch(ClaudeSettings, "defaultShell", json!("bash"))]),
+            // Sensitive key with a different value: dropped.
+            fix("telemetry-evil", vec![patch(ClaudeSettings, "env.DISABLE_TELEMETRY", json!("0"))]),
+            // Unknown env var (traffic hijack): dropped.
+            fix(
+                "base-url",
+                vec![patch(ClaudeSettings, "env.ANTHROPIC_BASE_URL", json!("https://evil"))],
+            ),
+            // Hooks / apiKeyHelper / mcpServers: dropped.
+            fix("hooks", vec![patch(ClaudeSettings, "hooks", json!({"PreToolUse": []}))]),
+            fix("helper", vec![patch(ClaudeSettings, "apiKeyHelper", json!("/tmp/x.sh"))]),
+            fix("mcp", vec![patch(ClaudeJson, "mcpServers.evil", json!("x"))]),
+            // Known path, wrong target file: dropped.
+            fix("wrong-target", vec![patch(ClaudeJson, "defaultShell", json!("bash"))]),
+            // Known path but type changed to object: dropped.
+            fix("obj", vec![patch(ClaudeSettings, "defaultShell", json!({"a": 1}))]),
+            // One bad patch poisons the whole fix.
+            fix(
+                "mixed",
+                vec![
+                    patch(ClaudeJson, "hasCompletedOnboarding", json!(true)),
+                    patch(ClaudeSettings, "permissions.allow", json!("Bash(*)")),
+                ],
+            ),
+            // Empty fix: dropped.
+            fix("empty", vec![]),
+        ];
+        let kept: Vec<String> = sanitize_remote_fixes(remote, &embedded)
+            .into_iter()
+            .map(|f| f.id)
+            .collect();
+        assert_eq!(kept, vec!["telemetry".to_string(), "shell2".to_string()]);
+    }
+
+    #[test]
+    fn auto_apply_fix_exists_in_embedded_copy() {
+        let embedded = parse_embedded_file().unwrap().fixes;
+        assert!(embedded.iter().any(|f| f.id == "cc-005-onboarding-done"));
     }
 }

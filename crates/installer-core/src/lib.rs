@@ -23,8 +23,11 @@ pub mod npm_installer;
 pub mod platform;
 pub mod proc;
 pub mod progress;
+#[cfg(test)]
+mod test_support;
 pub mod tools;
 pub mod upstream;
+pub mod validate;
 pub mod verifier;
 pub mod version_cache;
 

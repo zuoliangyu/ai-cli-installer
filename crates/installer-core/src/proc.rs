@@ -9,9 +9,22 @@
 //! All Windows spawns set `CREATE_NO_WINDOW (0x08000000)` so console children
 //! (`cmd.exe`, `where.exe`, `npm.cmd` shim, ...) don't flash a black box from a
 //! GUI-subsystem Tauri host.
+//!
+//! Every child we wait on goes through [`output_with_timeout`]: a hung
+//! `npm install` / `claude install` / rc-file-heavy `--version` used to block
+//! the global tool-operation lock forever. Children are `kill_on_drop`, so a
+//! timed-out (or cancelled) wait also terminates the process.
 
 use std::path::{Path, PathBuf};
+use std::process::{Output, Stdio};
+use std::time::Duration;
 use tokio::process::Command;
+
+/// Budget for quick probes: `--version`, `where`, `npm prefix -g`, ...
+pub const PROBE_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// Budget for real work: `npm install -g`, `claude install`, UAC prompts.
+pub const INSTALL_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 
 /// CreationFlags bit that suppresses the per-child console window.
 /// <https://learn.microsoft.com/en-us/windows/win32/procthread/process-creation-flags>
@@ -72,22 +85,75 @@ pub fn shell_command(program: &str) -> Command {
     }
 }
 
-/// Run an executable on disk and return stdout. On Windows, if the path looks
-/// like a shim (`.cmd`/`.bat`/`.ps1`), routes through `cmd /c`. No console
-/// window appears.
+/// Run `cmd` to completion, capturing stdout/stderr, bounded by `timeout`.
+///
+/// - stdin is closed so a child waiting for input (npm prompts, a shell rc
+///   doing `read`) fails fast instead of hanging;
+/// - `kill_on_drop(true)` means the timeout (or the caller's future being
+///   dropped) kills the child. On Windows the whole tree is also taken down
+///   with `taskkill /T`, because killing the `cmd /c` wrapper alone would
+///   leave `node.exe` running and still holding files open.
+///
+/// A timeout is reported as `io::ErrorKind::TimedOut` with a Chinese
+/// message, so callers' existing `map_err(|e| format!(..., e))` stays useful.
+pub async fn output_with_timeout(cmd: &mut Command, timeout: Duration) -> std::io::Result<Output> {
+    cmd.kill_on_drop(true)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let child = cmd.spawn()?;
+    let pid = child.id();
+    match tokio::time::timeout(timeout, child.wait_with_output()).await {
+        Ok(res) => res,
+        Err(_) => {
+            kill_tree(pid).await;
+            Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                format!("命令执行超时（超过 {} 秒），已强制结束", timeout.as_secs()),
+            ))
+        }
+    }
+}
+
+/// Best-effort kill of a timed-out child's process tree. The direct child is
+/// already killed by `kill_on_drop`; this catches grandchildren on Windows.
+async fn kill_tree(pid: Option<u32>) {
+    #[cfg(windows)]
+    if let Some(pid) = pid {
+        let mut c = silent_command("taskkill");
+        c.args(["/T", "/F", "/PID", &pid.to_string()])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .kill_on_drop(true);
+        let _ = tokio::time::timeout(Duration::from_secs(5), c.status()).await;
+    }
+    #[cfg(not(windows))]
+    let _ = pid;
+}
+
+/// Run an executable on disk and return stdout. On Windows, `.cmd`/`.bat`
+/// shims are routed through `cmd /c` and `.ps1` shims through
+/// `powershell -File` (going through `cmd /c` would hit the file association
+/// and open the script in Notepad). No console window appears. Bounded by
+/// [`PROBE_TIMEOUT`].
 pub async fn run_executable(path: &Path, args: &[&str]) -> Option<String> {
-    let path_str = path.to_string_lossy();
-    let lower = path_str.to_ascii_lowercase();
-    let needs_cmd = cfg!(windows)
-        && (lower.ends_with(".cmd") || lower.ends_with(".bat") || lower.ends_with(".ps1"));
-
-    let output = if needs_cmd {
+    let lower = path.to_string_lossy().to_ascii_lowercase();
+    let mut cmd = if cfg!(windows) && (lower.ends_with(".cmd") || lower.ends_with(".bat")) {
         let mut c = silent_command("cmd");
-        c.arg("/c").arg(path).args(args).output().await.ok()?
+        c.arg("/c").arg(path);
+        c
+    } else if cfg!(windows) && lower.ends_with(".ps1") {
+        let mut c = silent_command("powershell");
+        c.args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File"])
+            .arg(path);
+        c
     } else {
-        silent_command_path(path).args(args).output().await.ok()?
+        silent_command_path(path)
     };
+    cmd.args(args);
 
+    let output = output_with_timeout(&mut cmd, PROBE_TIMEOUT).await.ok()?;
     if !output.status.success() {
         return None;
     }
@@ -97,19 +163,18 @@ pub async fn run_executable(path: &Path, args: &[&str]) -> Option<String> {
 /// Resolve a bare command name to an absolute path via `where` (Windows) or
 /// `command -v` (Unix). Returns the first match.
 pub async fn resolve_command_path(command_name: &str) -> Option<PathBuf> {
-    let output = if cfg!(windows) {
-        silent_command("where")
-            .arg(command_name)
-            .output()
-            .await
-            .ok()?
+    let mut cmd = if cfg!(windows) {
+        let mut c = silent_command("where");
+        c.arg(command_name);
+        c
     } else {
-        Command::new("sh")
-            .args(["-c", &format!("command -v {}", command_name)])
-            .output()
-            .await
-            .ok()?
+        // Pass the name as a positional parameter instead of splicing it
+        // into the script, so it's never interpreted by the shell.
+        let mut c = Command::new("sh");
+        c.args(["-c", "command -v \"$1\"", "sh", command_name]);
+        c
     };
+    let output = output_with_timeout(&mut cmd, PROBE_TIMEOUT).await.ok()?;
     if !output.status.success() {
         return None;
     }

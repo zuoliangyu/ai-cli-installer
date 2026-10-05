@@ -116,18 +116,22 @@ fn write_to_disk(map: &ToolMap) {
 
 /// Look up the most recently recorded version for `(tool_id, channel)`.
 /// Returns `None` if we've never recorded one or the cache file is unreadable.
+/// Entries that aren't well-formed versions (older builds could cache a
+/// proxy's HTML error page) are ignored.
 pub fn get(tool_id: &str, channel: &str) -> Option<String> {
     let _guard = FILE_LOCK.lock().ok()?;
     let map = load_from_disk();
     map.get(tool_id)
         .and_then(|channels| channels.get(channel))
         .map(|entry| entry.version.clone())
+        .filter(|v| crate::validate::is_valid_version(v))
 }
 
 /// Persist a fresh `(tool_id, channel) → version` pair. Errors are swallowed
 /// and logged — callers should not branch on success.
 pub fn record(tool_id: &str, channel: &str, version: &str) {
-    if version.is_empty() {
+    if !crate::validate::is_valid_version(version) {
+        tracing::warn!("version cache: refusing to record invalid version for {}/{}", tool_id, channel);
         return;
     }
     let Ok(_guard) = FILE_LOCK.lock() else {
