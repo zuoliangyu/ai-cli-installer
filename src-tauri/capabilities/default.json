@@ -4,16 +4,18 @@
   "description": "Default capabilities for the main window",
   "windows": ["main"],
   "permissions": [
-    "core:default",
-    "core:event:default",
-    "core:window:default",
-    "core:webview:default",
     "core:app:default",
+    "core:event:default",
     "core:resources:default",
-    "core:menu:default",
-    "core:tray:default",
     "updater:default",
     "process:default",
-    "shell:allow-open"
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [
+        { "url": "http://*" },
+        { "url": "https://*" },
+        { "url": "mailto:*" }
+      ]
+    }
   ]
 }

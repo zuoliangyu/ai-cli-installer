@@ -14,8 +14,9 @@ Set-Location -LiteralPath $PSScriptRoot
 if ($Clean) {
     Write-Host '[build] cleaning previous artifacts...' -ForegroundColor Yellow
     if (Test-Path 'dist')                  { Remove-Item -Recurse -Force 'dist' }
-    if (Test-Path 'src-tauri/target/release/bundle') {
-        Remove-Item -Recurse -Force 'src-tauri/target/release/bundle'
+    # Cargo workspace: bundles land in the root target/, not src-tauri/target/.
+    if (Test-Path 'target/release/bundle') {
+        Remove-Item -Recurse -Force 'target/release/bundle'
     }
 }
 
