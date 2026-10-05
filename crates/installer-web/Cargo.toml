@@ -21,4 +21,4 @@ mime_guess = "2"
 clap = { version = "4", features = ["derive", "env"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
-getrandom = "0.3"
+getrandom = "0.4"

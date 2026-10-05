@@ -94,7 +94,7 @@ src-tauri/                    Tauri 桌面壳
 
 需要：
 
-- Rust 1.77+ (`rustup install stable`)
+- Rust 1.80+ (`rustup install stable`)
 - Node 20+ / npm
 - Tauri CLI: `cargo install tauri-cli --locked --version "^2.0"`
 - 各平台原生依赖：参考 https://v2.tauri.app/start/prerequisites/
@@ -124,6 +124,8 @@ npm run web          # 等价于 cargo run -p installer-web
 
 默认监听 `http://127.0.0.1:3210`。可通过 `--host` / `--port` 或环境变量 `INSTALLER_HOST` / `INSTALLER_PORT` 调整。
 
+未设置 `INSTALLER_TOKEN` 时，服务启动会自动生成随机令牌，并在终端打印 `http://127.0.0.1:3210/?token=…` 链接，用该链接打开即可。服务只接受 Host 为 `127.0.0.1` / `localhost` / `[::1]` 的请求，并拒绝跨源的写操作和 WebSocket 连接，以防御 DNS rebinding。
+
 ### 远程 Web 访问
 
 绑定非本机地址时必须设置至少 16 位访问令牌，否则服务会拒绝启动：
@@ -131,14 +133,17 @@ npm run web          # 等价于 cargo run -p installer-web
 ```powershell
 $env:INSTALLER_HOST="0.0.0.0"
 $env:INSTALLER_TOKEN="请替换为至少16位的随机令牌"
+$env:INSTALLER_ALLOWED_HOSTS="192.168.1.10,installer.example.com"
 npm run web
 ```
+
+监听 `0.0.0.0` / `::` 时，浏览器地址栏里使用的 IP 或域名必须通过 `--allowed-host` 或 `INSTALLER_ALLOWED_HOSTS`（逗号分隔，可不带端口）加入白名单，否则请求会被 403 拒绝。
 
 浏览器使用 `http://服务器地址:3210/?token=访问令牌` 首次打开。页面会把令牌保存到当前标签页的 `sessionStorage`，并立即从地址栏移除；API 使用 Bearer 鉴权，WebSocket 使用同一令牌。公网使用时仍应放在 HTTPS 反向代理或 SSH 隧道后，避免明文 HTTP 泄露令牌和 API Key。
 
 > 注意：Web 模式改的是**运行 installer-web 的那台机器**的环境（`~/.local/bin`、PATH、`~/.claude/settings.json`）。容器化对该应用没有意义，因此不提供 Docker 镜像。
 
-配置修复和 Unix PATH 写入前会保留递增备份：首次为 `.bak`，后续为 `.bak.1`、`.bak.2` 等。同名配置字段会覆盖，其他字段保持不变。
+配置修复和 Unix PATH 写入前会保留递增备份：首次为 `.bak`，后续为 `.bak.1`、`.bak.2` 等，只保留最近 5 份；内容没有变化时不写入也不备份。同名配置字段会覆盖，其他字段保持不变。
 
 ## 构建
 

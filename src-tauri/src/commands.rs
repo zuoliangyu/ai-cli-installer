@@ -90,12 +90,12 @@ pub async fn check_path_status(tool_id: String) -> Result<PathStatus> {
 
 #[tauri::command]
 pub async fn add_to_path(tool_id: String, scope: Option<PathScope>) -> Result<()> {
-    app_state::add_to_path(&tool_id, scope.unwrap_or(PathScope::User)).await
+    app_state::add_to_path(&tool_id, scope.unwrap_or_default()).await
 }
 
 #[tauri::command]
 pub async fn remove_from_path(tool_id: String, scope: Option<PathScope>) -> Result<()> {
-    app_state::remove_from_path(&tool_id, scope.unwrap_or(PathScope::User)).await
+    app_state::remove_from_path(&tool_id, scope.unwrap_or_default()).await
 }
 
 #[tauri::command]

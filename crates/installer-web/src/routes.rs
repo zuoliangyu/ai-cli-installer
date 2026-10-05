@@ -227,7 +227,7 @@ pub struct PathBody {
 
 impl PathBody {
     fn scope(&self) -> PathScope {
-        self.scope.unwrap_or(PathScope::User)
+        self.scope.unwrap_or_default()
     }
 }
 

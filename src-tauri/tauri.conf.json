@@ -40,7 +40,10 @@
     "category": "DeveloperTool",
     "shortDescription": "Claude Code 一键安装器",
     "longDescription": "为 Claude Code 提供镜像加速下载与一键安装的桌面工具",
-    "createUpdaterArtifacts": true
+    "createUpdaterArtifacts": true,
+    "macOS": {
+      "minimumSystemVersion": "13.3"
+    }
   },
   "plugins": {
     "updater": {

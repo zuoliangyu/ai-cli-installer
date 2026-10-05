@@ -159,7 +159,7 @@ fn swap_into_place(tmp: &Path, dest: &Path) -> std::io::Result<()> {
         Err(first) if dest.exists() => {
             // Most likely the old exe is running. Move it aside, then retry.
             let old = free_old_path(dest);
-            std::fs::rename(dest, &old).map_err(|e| {
+            rename_retrying(dest, &old).map_err(|e| {
                 std::io::Error::new(
                     e.kind(),
                     format!(
@@ -170,7 +170,7 @@ fn swap_into_place(tmp: &Path, dest: &Path) -> std::io::Result<()> {
                     ),
                 )
             })?;
-            if let Err(e) = std::fs::rename(tmp, dest) {
+            if let Err(e) = rename_retrying(tmp, dest) {
                 // Put the old binary back so the user isn't left with nothing.
                 let _ = std::fs::rename(&old, dest);
                 return Err(e);
@@ -184,6 +184,25 @@ fn swap_into_place(tmp: &Path, dest: &Path) -> std::io::Result<()> {
         }
         Err(e) => Err(e),
     }
+}
+
+/// Renaming a running exe is allowed, but antivirus scanners (Defender) and
+/// the loader briefly open fresh executables without FILE_SHARE_DELETE, which
+/// surfaces as a sharing violation (os error 32). Retry for up to ~1.5s.
+#[cfg(windows)]
+fn rename_retrying(from: &Path, to: &Path) -> std::io::Result<()> {
+    const ERROR_SHARING_VIOLATION: i32 = 32;
+    let mut delay = std::time::Duration::from_millis(50);
+    for _ in 0..6 {
+        match std::fs::rename(from, to) {
+            Err(e) if e.raw_os_error() == Some(ERROR_SHARING_VIOLATION) => {
+                std::thread::sleep(delay);
+                delay *= 2;
+            }
+            other => return other,
+        }
+    }
+    std::fs::rename(from, to)
 }
 
 /// First `<name>.old`, `<name>.old.1`, ... that doesn't exist (after trying

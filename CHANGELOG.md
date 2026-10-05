@@ -4,6 +4,33 @@
 
 ## [Unreleased]
 
+### 安全
+
+- Web 模式未设置令牌时自动生成随机令牌，并校验 Host 白名单（新增 `--allowed-host` / `INSTALLER_ALLOWED_HOSTS`）与跨源 Origin，防御 DNS rebinding；静态页增加 CSP、`X-Frame-Options` 等安全头。
+- 桌面端启用严格 CSP，精简 capabilities，外链打开由 shell 插件改为 opener 插件并限定 http/https/mailto。
+- 远程 `fixes.json` 只能修改内置定义中已有的配置项，`hooks` / `apiKeyHelper` / `env` 等敏感键必须与内置值一致；安装后自动应用只使用内置定义。
+- manifest 优先从官方 / GitHub 直连获取，仅能走代理时要求两个不同代理结果一致；来自网络的文件名与版本号统一校验，阻止路径穿越；下载按 manifest 大小限制写入量。
+
+### 修复
+
+- 安装二进制改为写临时文件后原子替换，Windows 上正在运行的旧版本先改名为 `.old`，不再出现 `os error 32` / ETXTBSY 或残留半截文件。
+- 所有子进程增加超时与 `kill_on_drop`，npm 卡住时不再拖死整个应用；安装进行中刷新工具列表直接返回缓存。
+- 配置文件读-改-写整体加锁并原子写入，内容未变化时不写入，备份只保留最近 5 份。
+- 原生安装校验失败会换下一个镜像；npmmirror 回退安装改为指定版本，不再装成 latest；支持 musl 平台包。
+- Windows 修改 PATH 时保留 `%USERPROFILE%` 等可展开变量；Unix 按 `$SHELL` 选择 rc 文件，结束标记缺失时不再误删内容。
+- macOS / Linux 从图形界面启动时从登录 shell 补全 PATH，可找到 Homebrew / nvm 安装的 node 与 npm。
+- Web 模式安装改为后台任务，关闭或刷新页面不会中断安装；WebSocket 增加心跳，前端断线自动重连。
+- Web 模式启动时镜像测速请求方法错误导致始终失败的问题。
+- 安装状态与进度移入全局 store，切换页面后不再丢失进度或允许重复安装；进度订阅全局共用一个连接。
+- 日志页改为增量拉取，页面隐藏时暂停轮询；深色模式启动不再闪白。
+
+### 变更
+
+- 前端依赖升级：Vite 8、Tailwind CSS 4、TypeScript 6、vite-plugin-svelte 7；Rust 依赖升级：reqwest 0.13、thiserror 2、dirs 7、sha2 0.11、zstd 0.14；Tauri 前后端统一为 2.12。
+- 最低 Rust 版本改为 1.80；macOS 最低系统版本 13.3。
+- release 构建启用 LTO 与 strip；发布流程校验版本一致性、签名缺失时失败，并新增 Intel Mac 构建。
+- 新增 PR 检查、CodeQL 工作流以及 PR / Issue 模板。
+
 ## [0.5.3] - 2026-07-16
 
 ### 修复
