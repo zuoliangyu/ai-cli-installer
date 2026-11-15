@@ -32,7 +32,7 @@ const DISMISSED_VERSION_KEY = "aci_update_dismissed_version";
 
 const initial: UpdateState = {
   status: "idle",
-  currentVersion: "",
+  currentVersion: __APP_VERSION__,
   newVersion: null,
   releaseNotes: null,
   downloadProgress: 0,
@@ -146,8 +146,8 @@ export async function downloadAndInstall(): Promise<void> {
 
 export async function openDownloadPage(): Promise<void> {
   const { newVersion } = get(updateState);
-  const tag = newVersion ? `v${newVersion}` : "latest";
-  const url = `https://github.com/zuoliangyu/ai-cli-installer/releases/tag/${tag}`;
+  const path = newVersion ? `tag/v${newVersion}` : "latest";
+  const url = `https://github.com/zuoliangyu/ai-cli-installer/releases/${path}`;
   await openExternalUrl(url);
 }
 

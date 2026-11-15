@@ -129,6 +129,10 @@
 
   const RETRY_LABEL = "获取版本失败 · 点此重试";
   const STALE_HINT = "未能访问镜像，使用缓存版本号（可能已过期）";
+  const COMMAND_NAMES: Record<string, string> = {
+    "claude-code": "claude",
+    "codex-cli": "codex",
+  };
 
   function sourceLabel(source: InstallationSource): string {
     if (source === "native") return "Native";
@@ -389,7 +393,7 @@
           <strong class="text-[11px] text-destructive font-semibold">PATH 提示</strong>
           <p class="leading-relaxed text-muted-foreground">
             检测到 {tool.installations.length} 处安装，但都不在当前 PATH。终端运行
-            <code class="font-mono bg-muted px-1 py-0.5 rounded text-foreground">{tool.id === "claude" ? "claude" : tool.id}</code>
+            <code class="font-mono bg-muted px-1 py-0.5 rounded text-foreground">{COMMAND_NAMES[tool.id] ?? tool.id}</code>
             时会找不到命令；可使用上面的「一键加入用户 PATH」按钮，或选其中一处的目录手动加进 PATH。
           </p>
         </div>
