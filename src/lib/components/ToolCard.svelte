@@ -91,22 +91,22 @@
   }
 
   async function handleAddPath() {
-    patchInstallState(tool.id, { error: null, message: null, failedMirror: null });
+    patchInstallState(tool.id, { pathError: null, pathMessage: null });
     try {
       await addToPath(tool.id, "user");
-      patchInstallState(tool.id, { message: "已加入用户 PATH。请重启终端或新开窗口生效。" });
+      patchInstallState(tool.id, { pathMessage: "已加入用户 PATH。请重启终端或新开窗口生效。" });
     } catch (e) {
-      patchInstallState(tool.id, { error: e instanceof Error ? e.message : String(e) });
+      patchInstallState(tool.id, { pathError: e instanceof Error ? e.message : String(e) });
     }
   }
 
   async function handleRemovePath(scope: "system" | "user") {
-    patchInstallState(tool.id, { error: null, message: null, failedMirror: null });
+    patchInstallState(tool.id, { pathError: null, pathMessage: null });
     try {
       await removeFromPath(tool.id, scope);
-      patchInstallState(tool.id, { message: `已从${scope === "system" ? "系统" : "用户"} PATH 移除。` });
+      patchInstallState(tool.id, { pathMessage: `已从${scope === "system" ? "系统" : "用户"} PATH 移除。` });
     } catch (e) {
-      patchInstallState(tool.id, { error: e instanceof Error ? e.message : String(e) });
+      patchInstallState(tool.id, { pathError: e instanceof Error ? e.message : String(e) });
     }
   }
 
@@ -500,6 +500,13 @@
         {/if}
       </div>
     </div>
+  {/if}
+
+  {#if st.pathMessage}
+    <div role="status" class="px-3 py-2 rounded-md text-xs bg-success/10 text-success">{st.pathMessage}</div>
+  {/if}
+  {#if st.pathError}
+    <div role="alert" class="px-3 py-2 rounded-md text-xs bg-destructive/10 text-destructive whitespace-pre-wrap wrap-break-word">PATH 操作失败：{st.pathError}</div>
   {/if}
 
   {#if st.message}

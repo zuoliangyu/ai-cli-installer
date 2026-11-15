@@ -175,6 +175,69 @@ test("a backend restart clears stale busy state and explicitly reports loss of h
   assert.equal(s.completed(), 1);
 });
 
+test("a late submission response cannot resurrect a task from a retired process", async () => {
+  const s = setup();
+  await s.monitor.refresh();
+  const response = deferred();
+  const submitted = deferred();
+  s.transport.startInstallTask = () => { submitted.resolve(); return response.promise; };
+  const install = s.monitor.install("claude-code", "latest");
+  await submitted.promise;
+  s.setSnapshot({ session_id: "process-b", tasks: [] });
+  await s.monitor.refresh();
+  s.transport.listInstallTasks = async () => { throw new Error("offline after restart"); };
+  response.resolve(job());
+  await install;
+  assert.equal(s.state().taskId, null);
+  assert.equal(s.state().taskStatus, null);
+  assert.equal(s.state().busy, false);
+  assert.equal(s.sync().ready, false);
+  assert.match(s.sync().notice, /后端已重启/);
+  assert.equal(s.completed(), 1);
+});
+
+test("a submission acknowledged by the newly observed process is still accepted", async () => {
+  const s = setup();
+  await s.monitor.refresh();
+  const response = deferred();
+  const submitted = deferred();
+  s.transport.startInstallTask = () => { submitted.resolve(); return response.promise; };
+  const install = s.monitor.install("claude-code", "latest");
+  await submitted.promise;
+  s.setSnapshot({ session_id: "process-b", tasks: [] });
+  await s.monitor.refresh();
+  const restartedTask = job({ session_id: "process-b", task_id: "process-b-1" });
+  s.setSnapshot({ session_id: "process-b", tasks: [restartedTask] });
+  response.resolve(restartedTask);
+  await install;
+  assert.equal(s.state().taskId, "process-b-1");
+  assert.equal(s.state().busy, true);
+  assert.equal(s.sync().ready, true);
+});
+
+test("task polling preserves PATH feedback while replacing stale installation errors", async () => {
+  const s = setup();
+  s.setSnapshot({ session_id: "process-a", tasks: [job()] });
+  await s.monitor.refresh();
+  s.stores.patchInstallState("claude-code", {
+    pathError: "PATH permission denied",
+    error: "stale installation error",
+  });
+  await s.monitor.refresh();
+  assert.equal(s.state().pathError, "PATH permission denied");
+  assert.equal(s.state().error, null);
+  s.setSnapshot({ session_id: "process-a", tasks: [job({
+    status: "failed", error: "current install failed",
+  })] });
+  await s.monitor.refresh();
+  assert.equal(s.state().pathError, "PATH permission denied");
+  assert.equal(s.state().error, "current install failed");
+  s.stores.patchInstallState("claude-code", { pathError: null, pathMessage: "PATH updated" });
+  await s.monitor.refresh();
+  assert.equal(s.state().pathMessage, "PATH updated");
+  assert.equal(s.state().error, "current install failed");
+});
+
 test("npm submission omits a saved Native mirror choice", async () => {
   const s = setup();
   await s.monitor.refresh();

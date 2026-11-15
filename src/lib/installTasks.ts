@@ -191,6 +191,7 @@ export class InstallTaskMonitor {
     if (current.busy || this.submitting.has(toolId) || !get(installTaskSync).ready) return;
     const mirror = current.method === "native" && current.mirror !== AUTO_MIRROR
       ? current.mirror : null;
+    const submittedSession = this.sessionId;
     this.submitting.add(toolId);
     this.generation++;
     patchInstallState(toolId, {
@@ -205,6 +206,8 @@ export class InstallTaskMonitor {
     });
     try {
       const task = await (await this.transport()).startInstallTask(toolId, channel, current.method, mirror);
+      // Polling may already have observed a restart while this response was in transit.
+      if (this.sessionId !== submittedSession && task.session_id !== this.sessionId) return;
       this.generation++;
       this.acceptSession(task.session_id);
       if (this.applyTask(task)) this.onCompleted();

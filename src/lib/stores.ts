@@ -48,6 +48,9 @@ export interface ToolInstallState {
   progress: DownloadProgress | null;
   message: string | null;
   error: string | null;
+  /** PATH 操作结果独立于安装任务，后台进度更新不能覆盖它。 */
+  pathMessage: string | null;
+  pathError: string | null;
   /** 最近一次失败的安装所指定的镜像；null 表示自动模式或错误与安装无关 */
   failedMirror: string | null;
 }
@@ -62,6 +65,8 @@ export const DEFAULT_INSTALL_STATE: ToolInstallState = Object.freeze({
   progress: null,
   message: null,
   error: null,
+  pathMessage: null,
+  pathError: null,
   failedMirror: null,
 });
 
