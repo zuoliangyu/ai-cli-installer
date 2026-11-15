@@ -2,7 +2,9 @@
 
 为 Claude Code / Codex CLI 提供镜像加速下载与一键安装的桌面应用，同时也能作为本地 / 远程 Web 服务运行。Tauri + Svelte 5 + Rust。
 
-当前版本：**v0.6.0**
+当前版本：**v0.7.0**
+
+本版重点提升安装可靠性：刷新或断线后恢复后台任务，协调桌面与 Web 的并发安装，改进下载超时、子进程清理和配置原子写入；同时完善 fish PATH、桌面窗口状态恢复，并提供可重复运行的 Docker 验证。完整变更见 [CHANGELOG](CHANGELOG.md)。
 
 > v0.6.0 起，Web 模式默认启用访问令牌与 Host / Origin 校验，安装二进制改为原子替换，远程修复定义只能修改内置白名单内的配置项。macOS 桌面版最低需要 13.3。
 
@@ -12,7 +14,7 @@
 
 安装任务由后端持有，刷新页面或暂时断网不会取消安装。前端每秒查询任务快照（隐藏页面每 5 秒），同一工具的活动任务会复用，状态同步失败时暂停新安装，恢复连接后继续显示结果。任务记录保留最近 20 条完成记录，仅在当前后端进程内有效；后端重启后会提示检查安装结果，不会自动重放旧任务。
 
-> Claude Code 走「镜像加速」时，若官方 bootstrap 的自我安装（`claude install`）因为回连 `downloads.claude.ai` 失败（国内网络常见），会自动 fallback 到直接把已校验的二进制部署到 `~/.local/bin/claude.exe`——保证装得上。
+> Claude Code 走「镜像加速」时，若官方 bootstrap 的自我安装（`claude install`）失败，会回退为直接部署已校验的二进制：Windows 使用 `~/.local/bin/claude.exe`，Linux/macOS 使用 `~/.local/bin/claude`。
 
 ## 架构
 
@@ -63,11 +65,14 @@ crates/
   installer-core/             共享核心库（无 Tauri 依赖）
     src/
       app_state.rs            高层服务 API（list_tools / install_tool / ...）
+      install_tasks.rs        后台安装队列、任务快照与活动任务去重
+      operation_lock.rs       同用户跨进程安装与诊断锁
+      config_file.rs          配置原子写入、权限与备份管理
       progress.rs             ProgressCallback 抽象
       mirrors.rs              镜像枚举 + 并发测速 + 故障切换
       downloader.rs           reqwest 流式下载 + 进度回调
       verifier.rs             SHA256 校验
-      installer.rs            调用 binary 的 install 子命令
+      installer.rs            任务暂存目录、自我安装与二进制部署
       npm_installer.rs        npm 路径安装（mirror tarball + 在线 fallback）
       platform.rs             OS / arch / Linux musl 检测
       upstream.rs             /latest /stable /manifest.json 抓取
@@ -94,6 +99,8 @@ src-tauri/                    Tauri 桌面壳
 
 .github/workflows/
   release.yml                 tag 推送时多平台构建并发版
+
+tests/docker/                 Linux 隔离验证、真实安装与浏览器测试
 ```
 
 ## 开发环境
@@ -207,6 +214,8 @@ cargo clippy --workspace -- -D warnings
 该命令会构建测试环境，运行 Linux core/Web 测试和前端检查，实际验证 Claude Code、Codex 的 Native/npm 安装，并使用 Chromium 检查 Web 安装、刷新恢复和故障提示。首次需要联网下载依赖和 CLI；所有安装使用容器自己的用户目录，不挂载宿主机 CLI 配置或凭据。
 
 日志、JSON 结果和截图保存在 `target/docker-validation/<运行编号>/`。分阶段运行和验证边界见[测试说明](tests/docker/README.md)。
+
+2026-11-15 实测：Linux Rust 99 项、前端 12 项测试通过，Claude Code / Codex 的 Native 与 npm 四条安装路线、三种 shell PATH 和三个浏览器场景均通过。浏览器场景中一个使用真实后端安装，两个使用模拟故障 API；详见[完整报告](tests/docker/RESULTS-2026-11-15.md)。该记录对应版本号调整前的功能代码；Windows 提权、macOS 和 Tauri 原生窗口仍需对应系统验证。
 
 ## 代码风格
 
