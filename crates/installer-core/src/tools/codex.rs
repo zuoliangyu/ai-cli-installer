@@ -59,7 +59,12 @@ impl CodexCli {
         let candidates: Vec<(String, String)> = mirrors
             .mirrors
             .iter()
-            .map(|m| (m.name().to_string(), m.binary_url(&version, &asset_plat, &entry.binary)))
+            .map(|m| {
+                (
+                    m.name().to_string(),
+                    m.binary_url(&version, &asset_plat, &entry.binary),
+                )
+            })
             .collect();
         downloader::download_verified(
             &client,
@@ -142,11 +147,8 @@ impl CodexCli {
             }
         }
 
-        let installed_version = self
-            .detect_installed()
-            .await
-            .unwrap_or_else(|| version.clone());
-        let install_path = npm_installer::npm_global_bin().await.unwrap_or_default();
+        let (installed_version, install_path) =
+            npm_installer::verify_installed("codex", &version).await?;
 
         Ok(InstallReport {
             tool_id: Self::ID.to_string(),

@@ -35,7 +35,7 @@ const NPM_PLATFORMS: &[&str] = &[
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct NodeInfo {
-    pub node_version: String,   // e.g. "v22.16.0"
+    pub node_version: String, // e.g. "v22.16.0"
     pub node_major: u32,
     pub npm_version: Option<String>,
 }
@@ -218,9 +218,7 @@ fn select_entries<'a>(
                 ))
             }
             NpmEntryRole::Platform(p) if p == platform => exact = Some(entry),
-            NpmEntryRole::Platform(p)
-                if entry.label.is_some() && glibc_key == Some(p.as_str()) =>
-            {
+            NpmEntryRole::Platform(p) if entry.label.is_some() && glibc_key == Some(p.as_str()) => {
                 musl_fallback = Some(entry)
             }
             NpmEntryRole::Platform(_) => {}
@@ -328,9 +326,7 @@ pub async fn install_via_mirror_tarballs(
             .mirrors
             .iter()
             .filter_map(|m| match m {
-                Mirror::GhRelease { .. } => {
-                    Some((m.name().to_string(), m.asset_url(version, tgz)))
-                }
+                Mirror::GhRelease { .. } => Some((m.name().to_string(), m.asset_url(version, tgz))),
                 Mirror::Upstream { .. } => None,
             })
             .collect();
@@ -407,7 +403,12 @@ pub async fn npm_global_bin() -> Result<String> {
     if !prefix_out.status.success() {
         return Err(AppError::Other("npm prefix -g failed".into()));
     }
-    let prefix = String::from_utf8_lossy(&prefix_out.stdout).trim().to_string();
+    let prefix = String::from_utf8_lossy(&prefix_out.stdout)
+        .trim()
+        .to_string();
+    if prefix.is_empty() || !std::path::Path::new(&prefix).is_absolute() {
+        return Err(AppError::Install("npm 返回了无效的全局安装目录".into()));
+    }
 
     // Windows: prefix IS the bin dir; Unix: prefix/bin
     let bin = if cfg!(target_os = "windows") {
@@ -418,9 +419,67 @@ pub async fn npm_global_bin() -> Result<String> {
     Ok(bin)
 }
 
+/// Verify the shim installed by this npm, independently of native/PATH precedence.
+pub async fn verify_installed(command: &str, expected: &str) -> Result<(String, String)> {
+    let bin = PathBuf::from(npm_global_bin().await?);
+    verify_installed_at(&bin, command, expected).await
+}
+
+async fn verify_installed_at(
+    bin: &std::path::Path,
+    command: &str,
+    expected: &str,
+) -> Result<(String, String)> {
+    let shim = bin.join(if cfg!(windows) {
+        format!("{command}.cmd")
+    } else {
+        command.to_string()
+    });
+    let version = crate::install_diagnostics::run_version(&shim, command)
+        .await
+        .ok_or_else(|| {
+            AppError::Install(format!(
+                "npm 已完成，但无法运行 {} 验证版本，请检查安装诊断",
+                shim.display()
+            ))
+        })?;
+    if version.trim_start_matches('v') != expected.trim_start_matches('v') {
+        return Err(AppError::Install(format!(
+            "npm 安装版本不匹配：期望 {expected}，{} 返回 {version}",
+            shim.display()
+        )));
+    }
+    Ok((version, shim.to_string_lossy().into_owned()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn verifies_npm_shim_instead_of_native_and_rejects_wrong_or_missing_version() {
+        let dir = std::env::temp_dir().join(format!("aci npm verification {}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let shim = dir.join(if cfg!(windows) { "codex.cmd" } else { "codex" });
+        let script = if cfg!(windows) {
+            "@echo off\r\necho codex-cli 2.0.0\r\n"
+        } else {
+            "#!/bin/sh\nprintf 'codex-cli 2.0.0\\n'\n"
+        };
+        std::fs::write(&shim, script).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let (version, path) = verify_installed_at(&dir, "codex", "2.0.0").await.unwrap();
+        assert_eq!(version, "2.0.0");
+        assert_eq!(path, shim.to_string_lossy());
+        assert!(verify_installed_at(&dir, "codex", "1.0.0").await.is_err());
+        std::fs::remove_file(&shim).unwrap();
+        assert!(verify_installed_at(&dir, "codex", "2.0.0").await.is_err());
+        std::fs::remove_dir(&dir).unwrap();
+    }
 
     fn entry(name: &str, label: Option<&str>, tgz: &str) -> NpmManifestEntry {
         NpmManifestEntry {
@@ -490,7 +549,10 @@ mod tests {
             ],
         };
         let (main, plat) = select_entries(&m, pkg, "win32-x64").unwrap();
-        assert_eq!((main.tgz.as_str(), plat.tgz.as_str()), ("main.tgz", "win.tgz"));
+        assert_eq!(
+            (main.tgz.as_str(), plat.tgz.as_str()),
+            ("main.tgz", "win.tgz")
+        );
         let (_, plat) = select_entries(&m, pkg, "linux-x64-musl").unwrap();
         assert_eq!(plat.tgz, "linux.tgz");
     }

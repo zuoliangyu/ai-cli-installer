@@ -75,7 +75,12 @@ impl ClaudeCode {
         let candidates: Vec<(String, String)> = mirrors
             .mirrors
             .iter()
-            .map(|m| (m.name().to_string(), m.binary_url(&version, plat, &entry.binary)))
+            .map(|m| {
+                (
+                    m.name().to_string(),
+                    m.binary_url(&version, plat, &entry.binary),
+                )
+            })
             .collect();
         downloader::download_verified(
             &client,
@@ -181,11 +186,8 @@ impl ClaudeCode {
             }
         }
 
-        let installed_version = self
-            .detect_installed()
-            .await
-            .unwrap_or_else(|| version.clone());
-        let install_path = npm_installer::npm_global_bin().await.unwrap_or_default();
+        let (installed_version, install_path) =
+            npm_installer::verify_installed("claude", &version).await?;
 
         let auto_applied_fixes = auto_apply_install_fixes();
 
@@ -207,7 +209,10 @@ impl ClaudeCode {
 /// so the user shouldn't see an error just because we couldn't touch the
 /// settings file.
 fn auto_apply_install_fixes() -> Vec<String> {
-    let ids: Vec<String> = AUTO_APPLY_ON_INSTALL.iter().map(|s| s.to_string()).collect();
+    let ids: Vec<String> = AUTO_APPLY_ON_INSTALL
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
     match fixes::apply_builtin_selected(&ids) {
         Ok(report) if report.applied_count > 0 => {
             tracing::info!(
@@ -222,7 +227,10 @@ fn auto_apply_install_fixes() -> Vec<String> {
             Vec::new()
         }
         Err(e) => {
-            tracing::warn!("auto-apply install fixes failed: {} (install still succeeded)", e);
+            tracing::warn!(
+                "auto-apply install fixes failed: {} (install still succeeded)",
+                e
+            );
             Vec::new()
         }
     }
