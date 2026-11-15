@@ -1,9 +1,12 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { untrack } from "svelte";
   import { listFixes, applyFixes, removeFixes, openPath } from "../api";
   import { openExternalUrl } from "../openExternal";
   import type { Fix } from "../types";
   import { ExternalLink, FileText } from "lucide-svelte";
+  import { fixesRevision } from "../stores";
+
+  let { active = true }: { active?: boolean } = $props();
 
   let fixes = $state<Fix[]>([]);
   let selected = $state<Set<string>>(new Set());
@@ -45,15 +48,23 @@
     muted: "bg-muted text-muted-foreground",
   };
 
-  onMount(async () => {
-    await loadFixes();
+  $effect(() => {
+    if (!active) return;
+    // 跟踪跨页面的配置变更，不把筛选、分页或选择状态变成刷新依赖。
+    $fixesRevision;
+    untrack(() => void loadFixes());
   });
 
+  let loadSequence = 0;
+
   async function loadFixes() {
+    const sequence = ++loadSequence;
     loading = true;
     loadError = null;
     try {
-      fixes = await listFixes();
+      const latest = await listFixes();
+      if (sequence !== loadSequence) return;
+      fixes = latest;
       selected = new Set(
         [...selected].filter((id) =>
           fixes.some((fix) => fix.id === id && !fix.configured)
@@ -61,9 +72,10 @@
       );
       clampPage();
     } catch (e) {
+      if (sequence !== loadSequence) return;
       loadError = e instanceof Error ? e.message : String(e);
     } finally {
-      loading = false;
+      if (sequence === loadSequence) loading = false;
     }
   }
 
@@ -193,7 +205,6 @@
       message = `已应用 ${report.applied_count} 个修复，写入 ${report.touched_files.length} 个文件`;
       touchedFiles = report.touched_files;
       selected = new Set();
-      await loadFixes();
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     } finally {
@@ -212,7 +223,6 @@
       const report = await removeFixes([fix.id]);
       message = `已取消 ${report.removed_count} 项配置，写入 ${report.touched_files.length} 个文件`;
       touchedFiles = report.touched_files;
-      await loadFixes();
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     } finally {
@@ -449,7 +459,7 @@
             </button>
           {/if}
           <button
-            disabled={busy || selected.size === 0}
+            disabled={busy || loading || selected.size === 0}
             onclick={apply}
             class="px-3 py-1.5 text-xs rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
           >

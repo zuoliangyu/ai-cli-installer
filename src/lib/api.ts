@@ -13,8 +13,12 @@ import {
   getInstallState,
   patchInstallState,
   installStates,
+  fixesRevision,
+  pathRevision,
+  pathUpdating,
   type InstallChannel,
 } from "./stores";
+import { get } from "svelte/store";
 import type {
   ApiTransport,
   ApplyFixReport,
@@ -123,7 +127,7 @@ export function ensureProgressSubscription(): void {
 export async function installTool(toolId: string, channel: InstallChannel): Promise<void> {
   const cur = getInstallState(toolId);
   if (cur.busy) return; // 防止重复安装
-  const pin = cur.mirror === AUTO_MIRROR ? null : cur.mirror;
+  const pin = cur.method === "native" && cur.mirror !== AUTO_MIRROR ? cur.mirror : null;
   patchInstallState(toolId, {
     busy: true,
     channel,
@@ -135,6 +139,8 @@ export async function installTool(toolId: string, channel: InstallChannel): Prom
   ensureProgressSubscription();
   try {
     const report = await (await transport()).installTool(toolId, channel, cur.method, pin);
+    fixesRevision.update((revision) => revision + 1);
+    pathRevision.update((revision) => revision + 1);
     const via = report.method === "npm" ? "npm" : pin ? `镜像 ${pin}` : "镜像";
     let msg = `已通过${via}安装 ${report.version} (${report.elapsed_secs}s)`;
     if (report.auto_applied_fixes.length > 0) {
@@ -179,11 +185,15 @@ export async function listFixes(): Promise<Fix[]> {
 }
 
 export async function applyFixes(fixIds: string[]): Promise<ApplyFixReport> {
-  return (await transport()).applyFixes(fixIds);
+  const report = await (await transport()).applyFixes(fixIds);
+  fixesRevision.update((revision) => revision + 1);
+  return report;
 }
 
 export async function removeFixes(fixIds: string[]): Promise<RemoveFixReport> {
-  return (await transport()).removeFixes(fixIds);
+  const report = await (await transport()).removeFixes(fixIds);
+  fixesRevision.update((revision) => revision + 1);
+  return report;
 }
 
 export async function openPath(path: string): Promise<void> {
@@ -195,11 +205,27 @@ export async function checkPathStatus(toolId: string): Promise<PathStatus> {
 }
 
 export async function addToPath(toolId: string, scope: PathScope = "user"): Promise<void> {
-  return (await transport()).addToPath(toolId, scope);
+  await changePath((t) => t.addToPath(toolId, scope));
 }
 
 export async function removeFromPath(toolId: string, scope: PathScope = "user"): Promise<void> {
-  return (await transport()).removeFromPath(toolId, scope);
+  await changePath((t) => t.removeFromPath(toolId, scope));
+}
+
+async function changePath(change: (t: ApiTransport) => Promise<void>): Promise<void> {
+  if (get(pathUpdating)) throw new Error("另一项 PATH 操作正在进行，请稍后重试");
+  pathUpdating.set(true);
+  try {
+    await change(await transport());
+    pathRevision.update((revision) => revision + 1);
+    try {
+      await refreshTools();
+    } catch (e) {
+      console.warn("PATH 已更新，但刷新安装诊断失败:", e);
+    }
+  } finally {
+    pathUpdating.set(false);
+  }
 }
 
 export async function getLogs(since: number | null = null): Promise<LogChunk> {

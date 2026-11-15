@@ -12,6 +12,8 @@
     patchInstallState,
     DEFAULT_INSTALL_STATE,
     AUTO_MIRROR,
+    pathRevision,
+    pathUpdating,
     type InstallChannel,
   } from "../stores";
   import type {
@@ -34,19 +36,23 @@
   let st = $derived($installStates[tool.id] ?? DEFAULT_INSTALL_STATE);
   let busy = $derived(st.busy);
 
-  let pathBusy = $state(false);
+  let pathBusy = $derived($pathUpdating);
   let pathStatus = $state<PathStatus | null>(null);
+  let pathSequence = 0;
 
   // 挂载时以及 tool 对象更新（例如安装完成后 refreshTools）时刷新 PATH 状态。
   $effect(() => {
+    $pathRevision;
     void refreshPathStatus(tool.id);
   });
 
   async function refreshPathStatus(toolId: string = tool.id) {
+    const sequence = ++pathSequence;
     try {
-      pathStatus = await checkPathStatus(toolId);
+      const latest = await checkPathStatus(toolId);
+      if (sequence === pathSequence) pathStatus = latest;
     } catch {
-      pathStatus = null;
+      if (sequence === pathSequence) pathStatus = null;
     }
   }
 
@@ -82,30 +88,22 @@
   }
 
   async function handleAddPath() {
-    pathBusy = true;
     patchInstallState(tool.id, { error: null, message: null, failedMirror: null });
     try {
       await addToPath(tool.id, "user");
       patchInstallState(tool.id, { message: "已加入用户 PATH。请重启终端或新开窗口生效。" });
-      await refreshPathStatus();
     } catch (e) {
       patchInstallState(tool.id, { error: e instanceof Error ? e.message : String(e) });
-    } finally {
-      pathBusy = false;
     }
   }
 
   async function handleRemovePath(scope: "system" | "user") {
-    pathBusy = true;
     patchInstallState(tool.id, { error: null, message: null, failedMirror: null });
     try {
       await removeFromPath(tool.id, scope);
       patchInstallState(tool.id, { message: `已从${scope === "system" ? "系统" : "用户"} PATH 移除。` });
-      await refreshPathStatus();
     } catch (e) {
       patchInstallState(tool.id, { error: e instanceof Error ? e.message : String(e) });
-    } finally {
-      pathBusy = false;
     }
   }
 

@@ -82,7 +82,7 @@
         {/if}
         {#if fixesMounted}
           <div class="{$page === 'fixes' ? 'contents' : 'hidden'}">
-            <FixesSection />
+            <FixesSection active={$page === "fixes"} />
           </div>
         {/if}
       </div>

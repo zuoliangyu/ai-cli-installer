@@ -13,6 +13,12 @@ export const mirrorProbing = writable<boolean>(false);
 /** 最近一次镜像测速的错误；成功后清空。 */
 export const mirrorProbeError = writable<string | null>(null);
 
+/** 配置被其它操作改变后，让已挂载的面板重新读取，保留其筛选和分页。 */
+export const fixesRevision = writable(0);
+export const pathRevision = writable(0);
+/** 两个工具共用 launcher 目录，PATH 写操作也共用忙状态。 */
+export const pathUpdating = writable(false);
+
 /** "auto" = race all mirrors (default). Any other value = pin to that
  * mirror name; back-end refuses to fall back so the user's choice is
  * honored even when it fails. */
