@@ -3,7 +3,9 @@ use serde_json::Value;
 use std::path::{Path, PathBuf};
 
 use crate::npm_installer;
-use crate::proc::{output_with_timeout, resolve_command_path, run_executable, shell_command, PROBE_TIMEOUT};
+use crate::proc::{
+    output_with_timeout, resolve_command_path, run_executable, shell_command, PROBE_TIMEOUT,
+};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -566,6 +568,8 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(cx.version.as_deref(), Some("0.160.0"));
-        assert!(detect_npm_global(&env, "nope-nonexistent-cmd", "nope").await.is_none());
+        assert!(detect_npm_global(&env, "nope-nonexistent-cmd", "nope")
+            .await
+            .is_none());
     }
 }

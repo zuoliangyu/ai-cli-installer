@@ -19,11 +19,19 @@ pub fn current() -> Result<&'static str> {
     }
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
     {
-        return Ok(if linux::is_musl() { "linux-x64-musl" } else { "linux-x64" });
+        return Ok(if linux::is_musl() {
+            "linux-x64-musl"
+        } else {
+            "linux-x64"
+        });
     }
     #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
     {
-        return Ok(if linux::is_musl() { "linux-arm64-musl" } else { "linux-arm64" });
+        return Ok(if linux::is_musl() {
+            "linux-arm64-musl"
+        } else {
+            "linux-arm64"
+        });
     }
     #[allow(unreachable_code)]
     Err(AppError::UnsupportedPlatform(format!(
@@ -209,16 +217,27 @@ mod tests {
             "Welcome!\nnvm: using node v22\n{}/opt/homebrew/bin:/usr/bin{}",
             PATH_BEGIN, PATH_END
         );
-        assert_eq!(extract_marked_path(&out), Some("/opt/homebrew/bin:/usr/bin"));
+        assert_eq!(
+            extract_marked_path(&out),
+            Some("/opt/homebrew/bin:/usr/bin")
+        );
         assert_eq!(extract_marked_path("no markers"), None);
-        assert_eq!(extract_marked_path(&format!("{}{}", PATH_BEGIN, PATH_END)), None);
+        assert_eq!(
+            extract_marked_path(&format!("{}{}", PATH_BEGIN, PATH_END)),
+            None
+        );
     }
 
     #[test]
     fn merges_only_new_absolute_dirs() {
         let merged = merge_path_lists(
             "/usr/bin:/bin",
-            &["/opt/homebrew/bin", "/usr/bin", "relative/bin", "/Users/a/.nvm/bin"],
+            &[
+                "/opt/homebrew/bin",
+                "/usr/bin",
+                "relative/bin",
+                "/Users/a/.nvm/bin",
+            ],
         );
         assert_eq!(
             merged.as_deref(),

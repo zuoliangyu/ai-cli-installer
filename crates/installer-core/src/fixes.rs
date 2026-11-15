@@ -625,30 +625,67 @@ mod tests {
     fn remote_policy_rejects_dangerous_patches() {
         use TargetFile::*;
         let embedded = vec![
-            fix("telemetry", vec![patch(ClaudeSettings, "env.DISABLE_TELEMETRY", json!("1"))]),
-            fix("shell", vec![patch(ClaudeSettings, "defaultShell", json!("powershell"))]),
-            fix("onboarding", vec![patch(ClaudeJson, "hasCompletedOnboarding", json!(true))]),
+            fix(
+                "telemetry",
+                vec![patch(ClaudeSettings, "env.DISABLE_TELEMETRY", json!("1"))],
+            ),
+            fix(
+                "shell",
+                vec![patch(ClaudeSettings, "defaultShell", json!("powershell"))],
+            ),
+            fix(
+                "onboarding",
+                vec![patch(ClaudeJson, "hasCompletedOnboarding", json!(true))],
+            ),
         ];
         let remote = vec![
             // Same slot, same value, new wording: kept.
-            fix("telemetry", vec![patch(ClaudeSettings, "env.DISABLE_TELEMETRY", json!("1"))]),
+            fix(
+                "telemetry",
+                vec![patch(ClaudeSettings, "env.DISABLE_TELEMETRY", json!("1"))],
+            ),
             // Non-sensitive key, same type: kept.
-            fix("shell2", vec![patch(ClaudeSettings, "defaultShell", json!("bash"))]),
+            fix(
+                "shell2",
+                vec![patch(ClaudeSettings, "defaultShell", json!("bash"))],
+            ),
             // Sensitive key with a different value: dropped.
-            fix("telemetry-evil", vec![patch(ClaudeSettings, "env.DISABLE_TELEMETRY", json!("0"))]),
+            fix(
+                "telemetry-evil",
+                vec![patch(ClaudeSettings, "env.DISABLE_TELEMETRY", json!("0"))],
+            ),
             // Unknown env var (traffic hijack): dropped.
             fix(
                 "base-url",
-                vec![patch(ClaudeSettings, "env.ANTHROPIC_BASE_URL", json!("https://evil"))],
+                vec![patch(
+                    ClaudeSettings,
+                    "env.ANTHROPIC_BASE_URL",
+                    json!("https://evil"),
+                )],
             ),
             // Hooks / apiKeyHelper / mcpServers: dropped.
-            fix("hooks", vec![patch(ClaudeSettings, "hooks", json!({"PreToolUse": []}))]),
-            fix("helper", vec![patch(ClaudeSettings, "apiKeyHelper", json!("/tmp/x.sh"))]),
-            fix("mcp", vec![patch(ClaudeJson, "mcpServers.evil", json!("x"))]),
+            fix(
+                "hooks",
+                vec![patch(ClaudeSettings, "hooks", json!({"PreToolUse": []}))],
+            ),
+            fix(
+                "helper",
+                vec![patch(ClaudeSettings, "apiKeyHelper", json!("/tmp/x.sh"))],
+            ),
+            fix(
+                "mcp",
+                vec![patch(ClaudeJson, "mcpServers.evil", json!("x"))],
+            ),
             // Known path, wrong target file: dropped.
-            fix("wrong-target", vec![patch(ClaudeJson, "defaultShell", json!("bash"))]),
+            fix(
+                "wrong-target",
+                vec![patch(ClaudeJson, "defaultShell", json!("bash"))],
+            ),
             // Known path but type changed to object: dropped.
-            fix("obj", vec![patch(ClaudeSettings, "defaultShell", json!({"a": 1}))]),
+            fix(
+                "obj",
+                vec![patch(ClaudeSettings, "defaultShell", json!({"a": 1}))],
+            ),
             // One bad patch poisons the whole fix.
             fix(
                 "mixed",

@@ -131,7 +131,11 @@ pub fn get(tool_id: &str, channel: &str) -> Option<String> {
 /// and logged — callers should not branch on success.
 pub fn record(tool_id: &str, channel: &str, version: &str) {
     if !crate::validate::is_valid_version(version) {
-        tracing::warn!("version cache: refusing to record invalid version for {}/{}", tool_id, channel);
+        tracing::warn!(
+            "version cache: refusing to record invalid version for {}/{}",
+            tool_id,
+            channel
+        );
         return;
     }
     let Ok(_guard) = FILE_LOCK.lock() else {
@@ -142,15 +146,13 @@ pub fn record(tool_id: &str, channel: &str, version: &str) {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    map.entry(tool_id.to_string())
-        .or_default()
-        .insert(
-            channel.to_string(),
-            CachedVersion {
-                version: version.to_string(),
-                fetched_at,
-            },
-        );
+    map.entry(tool_id.to_string()).or_default().insert(
+        channel.to_string(),
+        CachedVersion {
+            version: version.to_string(),
+            fetched_at,
+        },
+    );
     write_to_disk(&map);
 }
 
@@ -161,15 +163,13 @@ mod tests {
     #[test]
     fn round_trip_serialization() {
         let mut map: ToolMap = HashMap::new();
-        map.entry("claude".to_string())
-            .or_default()
-            .insert(
-                "latest".to_string(),
-                CachedVersion {
-                    version: "1.0.30".to_string(),
-                    fetched_at: 1_748_044_800,
-                },
-            );
+        map.entry("claude".to_string()).or_default().insert(
+            "latest".to_string(),
+            CachedVersion {
+                version: "1.0.30".to_string(),
+                fetched_at: 1_748_044_800,
+            },
+        );
         map.entry("claude".to_string()).or_default().insert(
             "stable".to_string(),
             CachedVersion {
