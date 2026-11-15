@@ -8,6 +8,7 @@ use tauri::{AppHandle, Emitter, State};
 
 use installer_core::env_manager::{PathScope, PathStatus};
 use installer_core::fixes::{ApplyReport, Fix, RemoveReport};
+use installer_core::install_tasks::{InstallTask, TaskSnapshot};
 use installer_core::mirrors::{MirrorList, MirrorProbe};
 use installer_core::npm_installer::NodeInfo;
 use installer_core::progress::{DownloadProgress, ProgressCallback};
@@ -50,6 +51,22 @@ pub async fn install_tool(
 ) -> Result<InstallReport> {
     let progress = progress_for_app(app);
     app_state::install_tool(&state, progress, &tool_id, channel, method, mirror).await
+}
+
+#[tauri::command]
+pub fn list_install_tasks(state: State<'_, Arc<AppState>>) -> TaskSnapshot {
+    app_state::list_install_tasks(&state)
+}
+
+#[tauri::command]
+pub async fn start_install_task(
+    state: State<'_, Arc<AppState>>,
+    tool_id: String,
+    channel: Option<String>,
+    method: Option<InstallMethod>,
+    mirror: Option<String>,
+) -> Result<InstallTask> {
+    app_state::start_install_task(&state, tool_id, channel, method, mirror)
 }
 
 #[tauri::command]

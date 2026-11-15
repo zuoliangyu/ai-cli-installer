@@ -8,6 +8,8 @@
 
 > CLI 安装与安装诊断在共享后端串行执行。连续安装多个工具时，后续任务会等待当前操作完成，避免 Windows 下并发争用下载文件或可执行文件导致 `os error 32`；桌面端与 Web 端行为一致。
 
+安装任务由后端持有，刷新页面或暂时断网不会取消安装。前端每秒查询任务快照（隐藏页面每 5 秒），同一工具的活动任务会复用，状态同步失败时暂停新安装，恢复连接后继续显示结果。任务记录保留最近 20 条完成记录，仅在当前后端进程内有效；后端重启后会提示检查安装结果，不会自动重放旧任务。
+
 > Claude Code 走「镜像加速」时，若官方 bootstrap 的自我安装（`claude install`）因为回连 `downloads.claude.ai` 失败（国内网络常见），会自动 fallback 到直接把已校验的二进制部署到 `~/.local/bin/claude.exe`——保证装得上。
 
 ## 架构
@@ -132,6 +134,8 @@ npm run web          # 等价于 cargo run -p installer-web
 
 ### 远程 Web 访问
 
+Web API 新增 `POST /api/install-tasks`（参数与原安装接口相同，立即返回带 `task_id` 的任务）和 `GET /api/install-tasks`（返回 `session_id` 与任务快照）。桌面端对应 `start_install_task` / `list_install_tasks`。旧安装接口和进度 WebSocket 保留兼容，新前端以任务快照关联进度与最终结果。
+
 绑定非本机地址时必须设置至少 16 位访问令牌，否则服务会拒绝启动：
 
 ```powershell
@@ -181,6 +185,7 @@ npm run web              # cargo run -p installer-web
 
 # 类型 / 编译检查
 npm run check            # svelte-check
+npm run test:frontend    # 安装任务恢复与状态同步的轻量回归测试
 cargo check --workspace  # 三 crate 全检查
 cargo clippy --workspace -- -D warnings
 ```

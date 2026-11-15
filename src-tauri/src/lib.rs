@@ -44,6 +44,8 @@ pub fn run() {
             commands::list_mirrors,
             commands::probe_mirrors,
             commands::install_tool,
+            commands::start_install_task,
+            commands::list_install_tasks,
             commands::check_path_status,
             commands::add_to_path,
             commands::remove_from_path,

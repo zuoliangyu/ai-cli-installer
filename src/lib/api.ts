@@ -9,20 +9,18 @@ import {
   mirrorProbes,
   mirrorProbing,
   mirrorProbeError,
-  AUTO_MIRROR,
   getInstallState,
   patchInstallState,
-  installStates,
   fixesRevision,
   pathRevision,
   pathUpdating,
   type InstallChannel,
 } from "./stores";
 import { get } from "svelte/store";
+import { InstallTaskMonitor } from "./installTasks";
 import type {
   ApiTransport,
   ApplyFixReport,
-  DownloadProgress,
   Fix,
   LogChunk,
   MirrorProbe,
@@ -30,7 +28,6 @@ import type {
   PathScope,
   PathStatus,
   RemoveFixReport,
-  UnlistenFn,
 } from "./types";
 
 const transportPromise: Promise<ApiTransport> = __IS_TAURI__
@@ -50,8 +47,8 @@ function errorMessage(e: unknown): string {
 // ---------------------------------------------------------------------------
 
 export async function initApp(): Promise<void> {
-  ensureProgressSubscription();
-  await refreshTools();
+  taskMonitor.startPolling();
+  await Promise.all([refreshTools(), taskMonitor.refresh()]);
   // Probe mirrors lazily, don't block first paint. 失败写入 mirrorProbeError，
   // 由 Sidebar 展示。
   probeMirrors().catch(() => {});
@@ -93,70 +90,24 @@ export function probeMirrors(): Promise<MirrorProbe[]> {
 }
 
 // ---------------------------------------------------------------------------
-// Download progress — one shared subscription for the whole app
+// Process-owned install jobs — one polling loop for both transports
 // ---------------------------------------------------------------------------
 
-let progressSubscription: Promise<UnlistenFn> | null = null;
+const taskMonitor = new InstallTaskMonitor(transport, () => {
+  fixesRevision.update((revision) => revision + 1);
+  pathRevision.update((revision) => revision + 1);
+  void refreshTools().catch((error) => console.warn("安装任务结束后刷新工具失败:", error));
+});
 
-function handleProgress(p: DownloadProgress): void {
-  installStates.update((all) => {
-    const cur = all[p.tool_id];
-    // 只在安装进行中接收进度，避免结束后迟到的事件把进度条又显示出来。
-    if (!cur?.busy) return all;
-    return { ...all, [p.tool_id]: { ...cur, progress: p } };
-  });
-}
-
-/** 建立全局唯一的进度订阅（Tauri 一个 listener / Web 一条 WebSocket），
- * 常驻到页面关闭；进度按 tool_id 写入 installStates，卡片只读 store。 */
-export function ensureProgressSubscription(): void {
-  if (progressSubscription) return;
-  progressSubscription = transport()
-    .then((t) => t.subscribeProgress(handleProgress))
-    .catch((e) => {
-      console.warn("订阅下载进度失败:", e);
-      progressSubscription = null;
-      return () => {};
-    });
-}
+export const refreshInstallTasks = (): Promise<void> => taskMonitor.refresh();
+export const stopInstallTaskMonitor = (): void => taskMonitor.stopPolling();
 
 // ---------------------------------------------------------------------------
 // Install (state kept in installStates, survives ToolCard unmount)
 // ---------------------------------------------------------------------------
 
 export async function installTool(toolId: string, channel: InstallChannel): Promise<void> {
-  const cur = getInstallState(toolId);
-  if (cur.busy) return; // 防止重复安装
-  const pin = cur.method === "native" && cur.mirror !== AUTO_MIRROR ? cur.mirror : null;
-  patchInstallState(toolId, {
-    busy: true,
-    channel,
-    error: null,
-    message: null,
-    progress: null,
-    failedMirror: null,
-  });
-  ensureProgressSubscription();
-  try {
-    const report = await (await transport()).installTool(toolId, channel, cur.method, pin);
-    fixesRevision.update((revision) => revision + 1);
-    pathRevision.update((revision) => revision + 1);
-    const via = report.method === "npm" ? "npm" : pin ? `镜像 ${pin}` : "镜像";
-    let msg = `已通过${via}安装 ${report.version} (${report.elapsed_secs}s)`;
-    if (report.auto_applied_fixes.length > 0) {
-      msg += `\n顺便应用了配置修复：${report.auto_applied_fixes.join("、")}（已写入 Claude 配置，可直接 \`claude login\`；如需撤销请到「配置修复」面板）。`;
-    }
-    patchInstallState(toolId, { message: msg });
-    try {
-      await refreshTools();
-    } catch (e) {
-      console.warn("安装后刷新工具列表失败:", e);
-    }
-  } catch (e) {
-    patchInstallState(toolId, { error: errorMessage(e), failedMirror: pin });
-  } finally {
-    patchInstallState(toolId, { busy: false, progress: null });
-  }
+  await taskMonitor.install(toolId, channel);
 }
 
 /** 「获取版本失败 · 点此重试」：复用该工具的 busy 锁，重试期间禁用其它按钮。 */
@@ -168,7 +119,10 @@ export async function retryToolVersions(toolId: string): Promise<void> {
   } catch (e) {
     patchInstallState(toolId, { error: errorMessage(e) });
   } finally {
-    patchInstallState(toolId, { busy: false });
+    const taskStatus = getInstallState(toolId).taskStatus;
+    if (taskStatus !== "queued" && taskStatus !== "running") {
+      patchInstallState(toolId, { busy: false });
+    }
   }
 }
 

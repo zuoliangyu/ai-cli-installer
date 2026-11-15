@@ -13,6 +13,7 @@
     "web": "cargo run -p installer-web",
     "preview": "vite preview",
     "check": "svelte-check --tsconfig ./tsconfig.json",
+    "test:frontend": "node --test src/lib/installTasks.test.mjs",
     "tauri": "tauri"
   },
   "dependencies": {

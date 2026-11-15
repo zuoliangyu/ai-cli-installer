@@ -17,6 +17,7 @@ pub mod env_manager;
 pub mod error;
 pub mod fixes;
 pub mod install_diagnostics;
+pub mod install_tasks;
 pub mod installer;
 pub mod mirrors;
 pub mod npm_installer;

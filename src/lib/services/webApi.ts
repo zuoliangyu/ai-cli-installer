@@ -7,6 +7,8 @@ import type {
   ApiTransport,
   ToolDescriptor,
   InstallReport,
+  InstallTask,
+  InstallTaskSnapshot,
   DownloadProgress,
   MirrorProbe,
   PathStatus,
@@ -58,25 +60,36 @@ async function responseError(resp: Response): Promise<Error> {
   return new Error(text || `${resp.status} ${resp.statusText}`.trim());
 }
 
-async function get<T>(path: string, query?: Record<string, string>): Promise<T> {
+async function get<T>(path: string, query?: Record<string, string>, signal?: AbortSignal): Promise<T> {
   const url = new URL(`${API_ORIGIN}${path}`, window.location.origin);
   if (query) {
     for (const [k, v] of Object.entries(query)) url.searchParams.set(k, v);
   }
-  const resp = await fetch(url, { method: "GET", headers: requestHeaders() });
+  const resp = await fetch(url, { method: "GET", headers: requestHeaders(), signal });
   if (!resp.ok) throw await responseError(resp);
   return resp.json() as Promise<T>;
 }
 
-async function post<T>(path: string, body?: unknown): Promise<T> {
+async function post<T>(path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
   const resp = await fetch(`${API_ORIGIN}${path}`, {
     method: "POST",
     headers: requestHeaders(true),
     body: body === undefined ? undefined : JSON.stringify(body),
+    signal,
   });
   if (!resp.ok) throw await responseError(resp);
   if (resp.status === 204) return undefined as T;
   return resp.json() as Promise<T>;
+}
+
+async function taskRequest<T>(request: (signal: AbortSignal) => Promise<T>): Promise<T> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 10_000);
+  try {
+    return await request(controller.signal);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function progressSocketUrl(): URL {
@@ -155,6 +168,14 @@ export const webApi: ApiTransport = {
 
   installTool: (toolId, channel, method, mirror) =>
     post<InstallReport>("/api/tools/install", { toolId, channel, method, mirror }),
+
+  startInstallTask: (toolId, channel, method, mirror) =>
+    taskRequest((signal) =>
+      post<InstallTask>("/api/install-tasks", { toolId, channel, method, mirror }, signal)
+    ),
+
+  listInstallTasks: () =>
+    taskRequest((signal) => get<InstallTaskSnapshot>("/api/install-tasks", undefined, signal)),
 
   detectNode: () => get<NodeInfo>("/api/node"),
 

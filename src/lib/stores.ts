@@ -4,6 +4,7 @@ import type {
   MirrorProbe,
   DownloadProgress,
   InstallMethod,
+  InstallTaskStatus,
 } from "./types";
 
 export const tools = writable<ToolDescriptor[]>([]);
@@ -18,6 +19,11 @@ export const fixesRevision = writable(0);
 export const pathRevision = writable(0);
 /** 两个工具共用 launcher 目录，PATH 写操作也共用忙状态。 */
 export const pathUpdating = writable(false);
+export const installTaskSync = writable({
+  ready: false,
+  error: null as string | null,
+  notice: null as string | null,
+});
 
 /** "auto" = race all mirrors (default). Any other value = pin to that
  * mirror name; back-end refuses to fall back so the user's choice is
@@ -31,6 +37,8 @@ export type InstallChannel = "latest" | "stable";
 export interface ToolInstallState {
   /** 安装 / 重新拉取版本进行中，期间禁用安装按钮 */
   busy: boolean;
+  taskId: string | null;
+  taskStatus: InstallTaskStatus | null;
   /** 正在或最近一次安装使用的通道 */
   channel: InstallChannel;
   /** 用户选择的安装方式 */
@@ -46,6 +54,8 @@ export interface ToolInstallState {
 
 export const DEFAULT_INSTALL_STATE: ToolInstallState = Object.freeze({
   busy: false,
+  taskId: null,
+  taskStatus: null,
   channel: "latest",
   method: "native",
   mirror: AUTO_MIRROR,

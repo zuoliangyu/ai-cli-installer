@@ -49,6 +49,26 @@ export interface InstallReport {
   auto_applied_fixes: string[];
 }
 
+export type InstallTaskStatus = "queued" | "running" | "succeeded" | "failed";
+
+export interface InstallTask {
+  session_id: string;
+  task_id: string;
+  tool_id: string;
+  channel: string;
+  method: InstallMethod;
+  mirror: string | null;
+  status: InstallTaskStatus;
+  progress: DownloadProgress | null;
+  report: InstallReport | null;
+  error: string | null;
+}
+
+export interface InstallTaskSnapshot {
+  session_id: string;
+  tasks: InstallTask[];
+}
+
 export interface NodeInfo {
   node_version: string;
   node_major: number;
@@ -134,6 +154,13 @@ export interface ApiTransport {
     method: InstallMethod,
     mirror: string | null
   ): Promise<InstallReport>;
+  startInstallTask(
+    toolId: string,
+    channel: Channel,
+    method: InstallMethod,
+    mirror: string | null
+  ): Promise<InstallTask>;
+  listInstallTasks(): Promise<InstallTaskSnapshot>;
   detectNode(): Promise<NodeInfo>;
   listFixes(): Promise<Fix[]>;
   applyFixes(fixIds: string[]): Promise<ApplyFixReport>;

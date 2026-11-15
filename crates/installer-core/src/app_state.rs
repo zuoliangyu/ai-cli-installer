@@ -15,6 +15,7 @@ use crate::env_manager::{self, PathScope, PathStatus};
 use crate::error::{AppError, Result};
 use crate::fixes::{self, ApplyReport, Fix, RemoveReport};
 use crate::install_diagnostics::{self, InstallationSource};
+use crate::install_tasks::{InstallRequest, InstallTask, InstallTasks, TaskSnapshot};
 use crate::mirrors::{self, MirrorList, MirrorProbe};
 use crate::npm_installer::{self, NodeInfo};
 use crate::progress::ProgressCallback;
@@ -30,6 +31,7 @@ const VERSION_MEMO_TTL: Duration = Duration::from_secs(5 * 60);
 pub struct AppState {
     pub client: reqwest::Client,
     pub mirrors: RwLock<MirrorList>,
+    install_tasks: Arc<InstallTasks>,
     /// Serializes installs and diagnostics. Introduced in v0.5.3: running a
     /// tool's `--version` while an install replaces it caused Windows
     /// file-in-use errors.
@@ -54,6 +56,7 @@ impl AppState {
         Self {
             client,
             mirrors: RwLock::new(MirrorList::builtin()),
+            install_tasks: Arc::new(InstallTasks::default()),
             tool_operations: Mutex::new(()),
             tools_cache: std::sync::Mutex::new(None),
             version_memo: std::sync::Mutex::new(HashMap::new()),
@@ -226,6 +229,43 @@ pub async fn list_mirrors(state: &AppState) -> Result<MirrorList> {
 pub async fn probe_mirrors(state: &AppState) -> Result<Vec<MirrorProbe>> {
     let list = state.mirrors.read().await.clone();
     Ok(mirrors::probe_all(&state.client, &list).await)
+}
+
+pub fn list_install_tasks(state: &AppState) -> TaskSnapshot {
+    state.install_tasks.snapshot()
+}
+
+pub fn start_install_task(
+    state: &Arc<AppState>,
+    tool_id: String,
+    channel: Option<String>,
+    method: Option<InstallMethod>,
+    mirror: Option<String>,
+) -> Result<InstallTask> {
+    if tool_id != ClaudeCode::ID && tool_id != CodexCli::ID {
+        return Err(AppError::Other(format!("unknown tool: {tool_id}")));
+    }
+    let request = InstallRequest {
+        tool_id,
+        channel: channel.unwrap_or_else(|| "latest".into()),
+        method: method.unwrap_or_default(),
+        mirror,
+    };
+    let job = request.clone();
+    let worker_state = state.clone();
+    Ok(state
+        .install_tasks
+        .start(request, move |progress| async move {
+            install_tool(
+                &worker_state,
+                progress,
+                &job.tool_id,
+                Some(job.channel),
+                Some(job.method),
+                job.mirror,
+            )
+            .await
+        }))
 }
 
 pub async fn install_tool(

@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use installer_core::app_state;
 use installer_core::env_manager::{PathScope, PathStatus};
 use installer_core::fixes::{ApplyReport, Fix, RemoveReport};
+use installer_core::install_tasks::{InstallTask, TaskSnapshot};
 use installer_core::mirrors::{MirrorList, MirrorProbe};
 use installer_core::npm_installer::NodeInfo;
 use installer_core::progress::{DownloadProgress, ProgressCallback};
@@ -167,6 +168,24 @@ pub async fn install_tool(
     })
     .await
     .map(Json)
+}
+
+pub async fn list_install_tasks(State(state): State<ServerState>) -> Json<TaskSnapshot> {
+    Json(app_state::list_install_tasks(&state.installer))
+}
+
+pub async fn start_install_task(
+    State(state): State<ServerState>,
+    body: JsonBody<InstallToolBody>,
+) -> ApiResult<Json<InstallTask>> {
+    let Json(body) = body?;
+    Ok(Json(app_state::start_install_task(
+        &state.installer,
+        body.tool_id,
+        body.channel,
+        body.method,
+        body.mirror,
+    )?))
 }
 
 pub async fn detect_node() -> ApiResult<Json<NodeInfo>> {

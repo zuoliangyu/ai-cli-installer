@@ -78,5 +78,8 @@ jobs:
       - name: svelte-check
         run: npm run check
 
+      - name: Install task regression tests
+        run: npm run test:frontend
+
       - name: Build
         run: npm run build

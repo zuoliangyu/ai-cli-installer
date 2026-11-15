@@ -9,6 +9,8 @@ import type {
   ApiTransport,
   ToolDescriptor,
   InstallReport,
+  InstallTask,
+  InstallTaskSnapshot,
   DownloadProgress,
   MirrorProbe,
   PathStatus,
@@ -26,6 +28,11 @@ export const tauriApi: ApiTransport = {
 
   installTool: (toolId, channel, method, mirror) =>
     invoke<InstallReport>("install_tool", { toolId, channel, method, mirror }),
+
+  startInstallTask: (toolId, channel, method, mirror) =>
+    invoke<InstallTask>("start_install_task", { toolId, channel, method, mirror }),
+
+  listInstallTasks: () => invoke<InstallTaskSnapshot>("list_install_tasks"),
 
   detectNode: () => invoke<NodeInfo>("detect_node"),
 

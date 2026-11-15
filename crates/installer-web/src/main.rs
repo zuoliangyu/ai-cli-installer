@@ -63,6 +63,10 @@ async fn main() {
     let api = Router::new()
         .route("/api/tools", get(routes::list_tools))
         .route("/api/tools/install", post(routes::install_tool))
+        .route(
+            "/api/install-tasks",
+            get(routes::list_install_tasks).post(routes::start_install_task),
+        )
         .route("/api/mirrors", get(routes::list_mirrors))
         .route(
             "/api/mirrors/probe",

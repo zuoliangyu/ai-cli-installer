@@ -14,6 +14,7 @@
     AUTO_MIRROR,
     pathRevision,
     pathUpdating,
+    installTaskSync,
     type InstallChannel,
   } from "../stores";
   import type {
@@ -35,6 +36,8 @@
   // 离开本页后再回来不会丢失，也不会因按钮恢复可点而重复安装。
   let st = $derived($installStates[tool.id] ?? DEFAULT_INSTALL_STATE);
   let busy = $derived(st.busy);
+  let installDisabled = $derived(busy || !$installTaskSync.ready);
+  let installLabel = $derived(st.taskStatus === "queued" ? "等待安装…" : "安装中…");
 
   let pathBusy = $derived($pathUpdating);
   let pathStatus = $state<PathStatus | null>(null);
@@ -227,11 +230,11 @@
       {:else}
         <button
           onclick={() => handleInstall("latest")}
-          disabled={busy}
+          disabled={installDisabled}
           title={tool.latest_version_stale ? STALE_HINT : undefined}
           class="px-3 py-1.5 text-xs whitespace-nowrap rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
         >
-          {busy && st.channel === "latest" ? "安装中…" : channelLabel("latest", tool.latest_version)}
+          {busy && st.channel === "latest" ? installLabel : channelLabel("latest", tool.latest_version)}
         </button>
       {/if}
       {#if channelFailed("stable")}
@@ -246,11 +249,11 @@
       {:else}
         <button
           onclick={() => handleInstall("stable")}
-          disabled={busy}
+          disabled={installDisabled}
           title={tool.stable_version_stale ? STALE_HINT : undefined}
           class="px-3 py-1.5 text-xs whitespace-nowrap rounded-md border border-border bg-muted/50 text-foreground hover:bg-accent transition-colors disabled:opacity-50"
         >
-          {busy && st.channel === "stable" ? "安装中…" : channelLabel("stable", tool.stable_version)}
+          {busy && st.channel === "stable" ? installLabel : channelLabel("stable", tool.stable_version)}
         </button>
       {/if}
     </div>
@@ -325,6 +328,14 @@
           仅尝试这一个镜像；失败不会回退
         </span>
       {/if}
+    </div>
+  {/if}
+
+  {#if st.taskStatus === "queued" || st.taskStatus === "running"}
+    <div role="status" class="text-xs text-muted-foreground">
+      {st.taskStatus === "queued"
+        ? "已排队，等待当前安装操作完成。"
+        : "正在后台安装，切换页面后可继续查看进度。"}
     </div>
   {/if}
 
@@ -504,7 +515,7 @@
           </span>
           <button
             onclick={handleRetryAuto}
-            disabled={busy}
+            disabled={installDisabled}
             class="px-2 py-0.5 text-[11px] rounded-md bg-destructive text-destructive-foreground hover:bg-destructive/90 transition-colors disabled:opacity-50"
           >
             改用自动模式重试
