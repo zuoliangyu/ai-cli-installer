@@ -12,10 +12,12 @@
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
 // ponytail: one global lock is enough for tiny config writes; use per-file locks if throughput matters.
 static CONFIG_WRITE_LOCK: Mutex<()> = Mutex::new(());
+static TEMP_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 /// How many `.bak*` files to keep per config file.
 pub const MAX_BACKUPS: usize = 5;
@@ -45,7 +47,7 @@ where
 
     // Follow a symlinked config (dotfile managers) so the rename below
     // replaces the real file instead of the link.
-    let target = resolve_symlink(path);
+    let target = resolve_symlink(path)?;
     let current = match std::fs::read(&target) {
         Ok(bytes) => Some(bytes),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
@@ -73,53 +75,105 @@ where
     Ok(true)
 }
 
-fn resolve_symlink(path: &Path) -> PathBuf {
-    match std::fs::symlink_metadata(path) {
-        Ok(meta) if meta.file_type().is_symlink() => {
-            std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+fn resolve_symlink(path: &Path) -> std::io::Result<PathBuf> {
+    let mut target = path.to_path_buf();
+    for _ in 0..40 {
+        match std::fs::symlink_metadata(&target) {
+            Ok(meta) if meta.file_type().is_symlink() => {
+                let link = std::fs::read_link(&target)?;
+                target = if link.is_absolute() {
+                    link
+                } else {
+                    target.parent().unwrap_or_else(|| Path::new(".")).join(link)
+                };
+            }
+            Ok(_) => return Ok(target),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(target),
+            Err(e) => return Err(e),
         }
-        _ => path.to_path_buf(),
     }
+    Err(std::io::Error::new(
+        std::io::ErrorKind::InvalidInput,
+        format!("too many config symlinks: {}", path.display()),
+    ))
 }
 
 /// Write `content` to a temp file next to `path`, fsync, then rename over
 /// `path`. Permissions of an existing `path` are carried over (e.g. a 0600
 /// `~/.claude.json` must not become world-readable).
 pub(crate) fn atomic_write(path: &Path, content: &[u8]) -> std::io::Result<()> {
+    let permissions = match std::fs::metadata(path) {
+        Ok(meta) => Some(meta.permissions()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => return Err(e),
+    };
+    let (mut file, tmp) = create_temp_file(path)?;
+    let result = (|| {
+        file.write_all(content)?;
+        if let Some(permissions) = permissions {
+            file.set_permissions(permissions)?;
+        }
+        file.sync_all()
+    })();
+    drop(file);
+    let result = result.and_then(|_| replace_file(&tmp, path));
+    if result.is_err() {
+        #[cfg(windows)]
+        if let Ok(meta) = std::fs::metadata(&tmp) {
+            let mut permissions = meta.permissions();
+            if permissions.readonly() {
+                permissions.set_readonly(false);
+                let _ = std::fs::set_permissions(&tmp, permissions);
+            }
+        }
+        let _ = std::fs::remove_file(&tmp);
+    }
+    result
+}
+
+fn create_temp_file(path: &Path) -> std::io::Result<(std::fs::File, PathBuf)> {
     let file_name = path
         .file_name()
         .ok_or_else(|| std::io::Error::other(format!("invalid path: {}", path.display())))?;
-    let mut tmp_name = std::ffi::OsString::from(".");
-    tmp_name.push(file_name);
-    tmp_name.push(format!(".tmp-{}", std::process::id()));
-    let tmp = path.with_file_name(tmp_name);
-
-    let result = (|| {
-        let mut f = std::fs::File::create(&tmp)?;
-        f.write_all(content)?;
-        f.sync_all()?;
-        drop(f);
-        if let Ok(meta) = std::fs::metadata(path) {
-            std::fs::set_permissions(&tmp, meta.permissions())?;
+    for _ in 0..32 {
+        let mut tmp_name = std::ffi::OsString::from(".");
+        tmp_name.push(file_name);
+        tmp_name.push(format!(
+            ".tmp-{}-{}",
+            std::process::id(),
+            TEMP_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ));
+        let tmp = path.with_file_name(tmp_name);
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
         }
-        std::fs::rename(&tmp, path)
-    })();
-    if let Err(e) = result {
-        let _ = std::fs::remove_file(&tmp);
-        // Windows refuses to rename over a file another process holds open
-        // without FILE_SHARE_DELETE. Writing in place is still better than
-        // failing the user's edit outright.
-        if cfg!(windows) && path.exists() {
-            tracing::warn!(
-                "atomic rename onto {} failed ({}); writing in place",
-                path.display(),
-                e
-            );
-            return std::fs::write(path, content);
+        match options.open(&tmp) {
+            Ok(file) => return Ok((file, tmp)),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e),
         }
-        return Err(e);
     }
-    Ok(())
+    Err(std::io::Error::new(
+        std::io::ErrorKind::AlreadyExists,
+        "could not create a unique config temp file",
+    ))
+}
+
+fn replace_file(tmp: &Path, path: &Path) -> std::io::Result<()> {
+    for attempt in 0..5 {
+        match std::fs::rename(tmp, path) {
+            Ok(()) => return Ok(()),
+            Err(e) if cfg!(windows) && matches!(e.raw_os_error(), Some(32 | 33)) && attempt < 4 => {
+                std::thread::sleep(std::time::Duration::from_millis(25 * (attempt + 1)));
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    unreachable!()
 }
 
 /// `path.bak` is index 0, `path.bak.N` is index N.
@@ -187,11 +241,8 @@ mod tests {
     use super::*;
 
     fn scratch_dir(tag: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "ai-cli-installer-{}-{}",
-            tag,
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("ai-cli-installer-{}-{}", tag, std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
@@ -272,9 +323,134 @@ mod tests {
     fn backup_index_parsing() {
         let p = Path::new("/x/settings.json");
         assert_eq!(backup_index(p, Path::new("/x/settings.json.bak")), Some(0));
-        assert_eq!(backup_index(p, Path::new("/x/settings.json.bak.12")), Some(12));
+        assert_eq!(
+            backup_index(p, Path::new("/x/settings.json.bak.12")),
+            Some(12)
+        );
         assert_eq!(backup_index(p, Path::new("/x/settings.json")), None);
         assert_eq!(backup_index(p, Path::new("/x/settings.json.bakx")), None);
         assert_eq!(backup_index(p, Path::new("/x/other.json.bak")), None);
+    }
+
+    #[test]
+    fn concurrent_atomic_writes_keep_complete_payloads() {
+        let dir = scratch_dir("concurrent-atomic");
+        let path = dir.join("settings.json");
+        std::fs::write(&path, "before").unwrap();
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(8));
+        let workers: Vec<_> = (0..8)
+            .map(|i| {
+                let path = path.clone();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    let content = vec![b'a' + i; 8192];
+                    barrier.wait();
+                    atomic_write(&path, &content).unwrap();
+                })
+            })
+            .collect();
+        for worker in workers {
+            worker.join().unwrap();
+        }
+        let content = std::fs::read(&path).unwrap();
+        assert_eq!(content.len(), 8192);
+        assert!(content.iter().all(|b| *b == content[0]));
+        assert!((b'a'..=b'h').contains(&content[0]));
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn sharing_violation_does_not_truncate_existing_config() {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        let dir = scratch_dir("sharing-violation");
+        let path = dir.join("settings.json");
+        std::fs::write(&path, "before").unwrap();
+        // Allow reads and writes, but deny deletion/rename like an editor.
+        let held = std::fs::OpenOptions::new()
+            .read(true)
+            .share_mode(0x1 | 0x2)
+            .open(&path)
+            .unwrap();
+        atomic_write(&path, b"after").expect_err("a locked config must not be replaced in place");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "before");
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
+        drop(held);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn temp_is_private_before_writing_and_existing_mode_is_preserved() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = scratch_dir("private-config");
+        let path = dir.join("settings.json");
+        let (file, tmp) = create_temp_file(&path).unwrap();
+        assert_eq!(file.metadata().unwrap().permissions().mode() & 0o077, 0);
+        drop(file);
+        std::fs::remove_file(tmp).unwrap();
+
+        atomic_write(&path, b"new secret").unwrap();
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o077,
+            0
+        );
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o640)).unwrap();
+        atomic_write(&path, b"updated secret").unwrap();
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o640
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn dangling_relative_symlink_chain_keeps_links_and_creates_target() {
+        use std::os::unix::fs::symlink;
+
+        let dir = scratch_dir("dangling-config-link");
+        let path = dir.join("settings.json");
+        let intermediate = dir.join("dotfiles-link");
+        let target = dir.join("dotfiles/settings.json");
+        symlink("dotfiles-link", &path).unwrap();
+        symlink("dotfiles/settings.json", &intermediate).unwrap();
+
+        write_with_backup(&path, "first").unwrap();
+        write_with_backup(&path, "second").unwrap();
+
+        assert_eq!(
+            std::fs::read_link(&path).unwrap(),
+            Path::new("dotfiles-link")
+        );
+        assert_eq!(
+            std::fs::read_link(&intermediate).unwrap(),
+            Path::new("dotfiles/settings.json")
+        );
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "second");
+        assert_eq!(
+            std::fs::read_to_string(target.with_extension("json.bak")).unwrap(),
+            "first"
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlink_cycle_returns_error_without_replacing_link() {
+        use std::os::unix::fs::symlink;
+
+        let dir = scratch_dir("cyclic-config-link");
+        let path = dir.join("settings.json");
+        symlink("settings.json", &path).unwrap();
+        assert!(write_with_backup(&path, "after").is_err());
+        assert_eq!(
+            std::fs::read_link(&path).unwrap(),
+            Path::new("settings.json")
+        );
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }
