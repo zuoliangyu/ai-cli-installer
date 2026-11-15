@@ -1,6 +1,8 @@
 use futures_util::stream::StreamExt;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use crate::error::{AppError, Result};
@@ -15,6 +17,57 @@ use crate::validate;
 /// enough that a dead mirror (typically `official` from CN) doesn't drag
 /// the whole install into reqwest's 60s global timeout.
 pub const PER_MIRROR_TIMEOUT: Duration = Duration::from_secs(8);
+
+const HEALTH_TTL: Duration = Duration::from_secs(10 * 60);
+#[derive(Clone, Copy)]
+struct Health {
+    at: Instant,
+    rank: u8,
+    latency: u64,
+}
+static HEALTH: OnceLock<Mutex<HashMap<String, Health>>> = OnceLock::new();
+
+fn record_health(name: &str, rank: u8, latency: u64) {
+    if let Ok(mut health) = HEALTH.get_or_init(Default::default).lock() {
+        health.retain(|_, value| value.at.elapsed() < HEALTH_TTL);
+        // A successful full download is stronger evidence than a channel probe.
+        if rank == 1 && health.get(name).is_some_and(|value| value.rank == 0) {
+            return;
+        }
+        health.insert(
+            name.to_string(),
+            Health {
+                at: Instant::now(),
+                rank,
+                latency,
+            },
+        );
+    }
+}
+
+pub(crate) fn record_download(name: &str, succeeded: bool) {
+    record_health(name, if succeeded { 0 } else { 3 }, 0);
+}
+
+pub(crate) fn order_downloads(candidates: &mut [(String, String)]) {
+    if let Ok(health) = HEALTH.get_or_init(Default::default).lock() {
+        rank_downloads(candidates, &health, Instant::now());
+    }
+}
+
+fn rank_downloads(
+    candidates: &mut [(String, String)],
+    health: &HashMap<String, Health>,
+    now: Instant,
+) {
+    candidates.sort_by_key(|(name, _)| {
+        health
+            .get(name)
+            .filter(|value| now.saturating_duration_since(value.at) < HEALTH_TTL)
+            .map(|value| (value.rank, value.latency))
+            .unwrap_or((2, 0))
+    });
+}
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -221,7 +274,15 @@ pub async fn probe_all(client: &reqwest::Client, list: &MirrorList) -> Vec<Mirro
             }
         }
     });
-    futures_util::future::join_all(probes).await
+    let results = futures_util::future::join_all(probes).await;
+    for result in &results {
+        record_health(
+            &result.name,
+            if result.ok { 1 } else { 3 },
+            result.latency_ms.unwrap_or(0),
+        );
+    }
+    results
 }
 
 /// Race every mirror in parallel for the version string, returning whichever
@@ -263,10 +324,16 @@ pub async fn fetch_version<'a>(
                     Ok(Ok(v)) if v.is_empty() => Err((mirror_name, "empty body".to_string())),
                     Ok(Ok(v)) => Err((
                         mirror_name,
-                        format!("invalid version body: {}", validate::truncate_for_display(&v)),
+                        format!(
+                            "invalid version body: {}",
+                            validate::truncate_for_display(&v)
+                        ),
                     )),
                     Ok(Err(e)) => Err((mirror_name, e.to_string())),
-                    Err(_) => Err((mirror_name, format!("{}s timeout", PER_MIRROR_TIMEOUT.as_secs()))),
+                    Err(_) => Err((
+                        mirror_name,
+                        format!("{}s timeout", PER_MIRROR_TIMEOUT.as_secs()),
+                    )),
                 }
             }
         })
@@ -459,6 +526,67 @@ fn consensus_index<K: PartialEq>(fps: &[(&str, Option<&K>)]) -> Option<usize> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn downloads_prefer_recent_success_and_fast_probes_without_dropping_sources() {
+        let now = Instant::now();
+        let mut health = HashMap::new();
+        health.insert(
+            "dead".into(),
+            Health {
+                at: now,
+                rank: 3,
+                latency: 0,
+            },
+        );
+        health.insert(
+            "fast".into(),
+            Health {
+                at: now,
+                rank: 1,
+                latency: 10,
+            },
+        );
+        health.insert(
+            "slow".into(),
+            Health {
+                at: now,
+                rank: 1,
+                latency: 100,
+            },
+        );
+        health.insert(
+            "downloaded".into(),
+            Health {
+                at: now,
+                rank: 0,
+                latency: 0,
+            },
+        );
+        let names = ["dead", "unknown", "slow", "fast", "downloaded"];
+        let mut candidates: Vec<_> = names
+            .iter()
+            .map(|name| (name.to_string(), format!("https://{name}/asset")))
+            .collect();
+        rank_downloads(&mut candidates, &health, now);
+        assert_eq!(
+            candidates.iter().map(|c| c.0.as_str()).collect::<Vec<_>>(),
+            ["downloaded", "fast", "slow", "unknown", "dead"]
+        );
+        let mut pinned = vec![("dead".to_string(), "https://dead/asset".to_string())];
+        rank_downloads(&mut pinned, &health, now);
+        assert_eq!(pinned.len(), 1);
+        assert_eq!(pinned[0].0, "dead");
+        let mut expired: Vec<_> = names
+            .iter()
+            .map(|name| (name.to_string(), String::new()))
+            .collect();
+        rank_downloads(&mut expired, &health, now + HEALTH_TTL);
+        assert_eq!(
+            expired.iter().map(|c| c.0.as_str()).collect::<Vec<_>>(),
+            names
+        );
+    }
+
     fn gh(name: &str, proxy: Option<&str>) -> Mirror {
         Mirror::GhRelease {
             name: name.into(),
@@ -488,7 +616,10 @@ mod tests {
             base: "https://downloads.claude.ai/x".into(),
         };
         assert_eq!(up.asset_url("1.2.3", "a.tgz"), "");
-        assert_eq!(up.manifest_url("1.2.3"), "https://downloads.claude.ai/x/1.2.3/manifest.json");
+        assert_eq!(
+            up.manifest_url("1.2.3"),
+            "https://downloads.claude.ai/x/1.2.3/manifest.json"
+        );
     }
 
     #[test]
@@ -529,16 +660,24 @@ mod tests {
                 let list = MirrorList { mirrors };
                 fetch_manifest(&client, &list, "1.0.0")
                     .await
-                    .map(|(m, man)| (m.name().to_string(), man.platforms["linux-x64"].checksum.clone()))
+                    .map(|(m, man)| {
+                        (
+                            m.name().to_string(),
+                            man.platforms["linux-x64"].checksum.clone(),
+                        )
+                    })
             }
         };
 
         // A single proxy is never enough.
         assert!(fetch(vec![proxy_serving("p1", "aa").await]).await.is_err());
         // Two proxies disagreeing: refuse.
-        assert!(fetch(vec![proxy_serving("p1", "aa").await, proxy_serving("p2", "bb").await])
-            .await
-            .is_err());
+        assert!(fetch(vec![
+            proxy_serving("p1", "aa").await,
+            proxy_serving("p2", "bb").await
+        ])
+        .await
+        .is_err());
         // Two of three agree: accepted, and it's the agreed-upon checksum.
         let (_, checksum) = fetch(vec![
             proxy_serving("p1", "aa").await,

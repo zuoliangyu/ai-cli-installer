@@ -355,11 +355,12 @@ pub async fn download_verified(
     client: &reqwest::Client,
     progress: &ProgressCallback,
     tool_id: &str,
-    candidates: Vec<(String, String)>,
+    mut candidates: Vec<(String, String)>,
     expected_sha256: &str,
     expected_size: Option<u64>,
     dest: &Path,
 ) -> Result<String> {
+    crate::mirrors::order_downloads(&mut candidates);
     let mut last_err: Option<AppError> = None;
     for (mirror, url) in candidates {
         tracing::info!("download attempt via {}: {}", mirror, url);
@@ -378,8 +379,12 @@ pub async fn download_verified(
             Err(e) => Err(e),
         };
         match res {
-            Ok(()) => return Ok(mirror),
+            Ok(()) => {
+                crate::mirrors::record_download(&mirror, true);
+                return Ok(mirror);
+            }
             Err(e) => {
+                crate::mirrors::record_download(&mirror, false);
                 tracing::warn!("mirror {} failed: {}", mirror, e);
                 last_err = Some(e);
                 let _ = tokio::fs::remove_file(dest).await;
