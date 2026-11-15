@@ -29,6 +29,12 @@ const MAX_ATTEMPTS: usize = 4;
 /// closes nor feeds) would hang forever without this.
 const BODY_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 
+struct DownloadLimits {
+    expected: Option<u64>,
+    header_timeout: Duration,
+    idle_timeout: Duration,
+}
+
 /// Write ceiling when the caller doesn't know the expected size. The largest
 /// real asset (Claude Code native binary / Codex npm tarball) is ~250 MB;
 /// this only exists so a hostile mirror can't stream until the disk is full.
@@ -43,10 +49,7 @@ pub const MAX_UNSIZED_DOWNLOAD: u64 = 1024 * 1024 * 1024;
 /// meant a dead mirror would idle out on reqwest's 60s global timeout
 /// instead of the 8s per-mirror budget. Every code path that walks a
 /// mirror chain should go through this helper.
-pub async fn send_with_timeout(
-    client: &reqwest::Client,
-    url: &str,
-) -> Result<reqwest::Response> {
+pub async fn send_with_timeout(client: &reqwest::Client, url: &str) -> Result<reqwest::Response> {
     let resp = tokio::time::timeout(PER_MIRROR_TIMEOUT, client.get(url).send())
         .await
         .map_err(|_| {
@@ -114,8 +117,12 @@ pub async fn download_to_file_limited(
         tokio::fs::create_dir_all(parent).await?;
     }
     let part = part_path(dest);
-    let expected = expected_size.filter(|n| *n > 0);
-    match download_attempts(client, progress, tool_id, mirror_name, url, &part, expected).await {
+    let limits = DownloadLimits {
+        expected: expected_size.filter(|n| *n > 0),
+        header_timeout: PER_MIRROR_TIMEOUT,
+        idle_timeout: BODY_IDLE_TIMEOUT,
+    };
+    match download_attempts(client, progress, tool_id, mirror_name, url, &part, limits).await {
         Ok(n) => {
             tokio::fs::rename(&part, dest).await?;
             Ok(n)
@@ -134,8 +141,9 @@ async fn download_attempts(
     mirror_name: &str,
     url: &str,
     part: &Path,
-    expected: Option<u64>,
+    limits: DownloadLimits,
 ) -> Result<u64> {
+    let expected = limits.expected;
     let cap = expected.unwrap_or(MAX_UNSIZED_DOWNLOAD);
     let mut downloaded: u64 = 0;
     let mut total: Option<u64> = expected;
@@ -149,7 +157,7 @@ async fn download_attempts(
         }
 
         // Header phase is bounded by PER_MIRROR_TIMEOUT, same as send_with_timeout.
-        let resp = match tokio::time::timeout(PER_MIRROR_TIMEOUT, req.send()).await {
+        let resp = match tokio::time::timeout(limits.header_timeout, req.send()).await {
             Ok(Ok(r)) => r,
             Ok(Err(e)) => {
                 // Connect-level failure: this mirror is unreachable, don't burn
@@ -159,7 +167,7 @@ async fn download_attempts(
             Err(_) => {
                 return Err(AppError::Other(format!(
                     "{}s timeout waiting for response headers",
-                    PER_MIRROR_TIMEOUT.as_secs()
+                    limits.header_timeout.as_secs()
                 )));
             }
         };
@@ -180,7 +188,10 @@ async fn download_attempts(
                 MAX_ATTEMPTS
             );
             downloaded = 0;
-            last_err = Some(AppError::Other(format!("{} 不支持断点续传（416）", mirror_name)));
+            last_err = Some(AppError::Other(format!(
+                "{} 不支持断点续传（416）",
+                mirror_name
+            )));
             continue;
         }
         let resp = resp.error_for_status()?;
@@ -224,7 +235,7 @@ async fn download_attempts(
         let mut stream_err: Option<AppError> = None;
 
         loop {
-            match tokio::time::timeout(BODY_IDLE_TIMEOUT, stream.next()).await {
+            match tokio::time::timeout(limits.idle_timeout, stream.next()).await {
                 Ok(Some(Ok(bytes))) => {
                     // Hard limit: never write past the expected size. A mirror
                     // that over-delivers is broken or hostile; no resume.
@@ -268,7 +279,7 @@ async fn download_attempts(
                 Err(_) => {
                     stream_err = Some(AppError::Other(format!(
                         "{}s idle timeout mid-download at {} bytes",
-                        BODY_IDLE_TIMEOUT.as_secs(),
+                        limits.idle_timeout.as_secs(),
                         downloaded
                     )));
                     break;
@@ -382,6 +393,107 @@ pub async fn download_verified(
 mod tests {
     use super::*;
     use crate::test_support::{response, serve};
+    use tokio::io::AsyncReadExt;
+
+    async fn slow_response(
+        header_delay: Duration,
+        chunk_delay: Duration,
+    ) -> (String, tokio::task::JoinHandle<()>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let task = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = [0u8; 4096];
+            socket.read(&mut request).await.unwrap();
+            tokio::time::sleep(header_delay).await;
+            if socket
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\n")
+                .await
+                .is_err()
+            {
+                return;
+            }
+            for byte in b"hello" {
+                tokio::time::sleep(chunk_delay).await;
+                if socket.write_all(&[*byte]).await.is_err() {
+                    return;
+                }
+            }
+        });
+        (format!("http://{addr}/file"), task)
+    }
+
+    #[tokio::test]
+    async fn healthy_slow_stream_outlives_connection_budget() {
+        let budget = Duration::from_millis(100);
+        let client = crate::app_state::build_http_client(budget);
+        let (url, server) = slow_response(Duration::ZERO, budget).await;
+        let dest = scratch("slow-stream");
+        let result = tokio::time::timeout(
+            Duration::from_secs(3),
+            download_attempts(
+                &client,
+                &crate::progress::noop_progress(),
+                "t",
+                "m",
+                &url,
+                &dest,
+                DownloadLimits {
+                    expected: Some(5),
+                    header_timeout: Duration::from_secs(1),
+                    idle_timeout: Duration::from_millis(400),
+                },
+            ),
+        )
+        .await;
+        server.abort();
+        assert_eq!(result.unwrap().unwrap(), 5);
+        assert_eq!(tokio::fs::read(&dest).await.unwrap(), b"hello");
+        tokio::fs::remove_file(dest).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn slow_headers_and_idle_body_still_time_out() {
+        let client = crate::app_state::build_http_client(Duration::from_secs(1));
+        for (tag, header_delay, chunk_delay, expected_error) in [
+            (
+                "headers",
+                Duration::from_secs(1),
+                Duration::ZERO,
+                "response headers",
+            ),
+            (
+                "idle",
+                Duration::ZERO,
+                Duration::from_secs(1),
+                "idle timeout",
+            ),
+        ] {
+            let (url, server) = slow_response(header_delay, chunk_delay).await;
+            let dest = scratch(tag);
+            let result = tokio::time::timeout(
+                Duration::from_secs(2),
+                download_attempts(
+                    &client,
+                    &crate::progress::noop_progress(),
+                    "t",
+                    "m",
+                    &url,
+                    &dest,
+                    DownloadLimits {
+                        expected: Some(5),
+                        header_timeout: Duration::from_millis(100),
+                        idle_timeout: Duration::from_millis(100),
+                    },
+                ),
+            )
+            .await;
+            server.abort();
+            let error = result.unwrap().unwrap_err().to_string();
+            assert!(error.contains(expected_error), "{error}");
+            let _ = tokio::fs::remove_file(dest).await;
+        }
+    }
 
     /// Chunked body without the terminating chunk: all bytes arrive, then
     /// the stream errors.
@@ -464,10 +576,8 @@ mod tests {
         assert!(!dest.exists());
         assert!(!part_path(&dest).exists());
 
-        let url = serve(|_, _| {
-            response("200 OK", &["Content-Length: 4096".into()], &data(4096))
-        })
-        .await;
+        let url =
+            serve(|_, _| response("200 OK", &["Content-Length: 4096".into()], &data(4096))).await;
         let res = download_to_file_limited(
             &reqwest::Client::new(),
             &crate::progress::noop_progress(),
@@ -491,7 +601,10 @@ mod tests {
             } else {
                 response(
                     "416 Range Not Satisfiable",
-                    &["Content-Range: bytes */1000".into(), "Content-Length: 0".into()],
+                    &[
+                        "Content-Range: bytes */1000".into(),
+                        "Content-Length: 0".into(),
+                    ],
                     b"",
                 )
             }
@@ -519,8 +632,10 @@ mod tests {
         let good = data(300);
         let sha = hex::encode(Sha256::digest(&good));
         let g = good.clone();
-        let bad_url = serve(|_, _| response("200 OK", &["Content-Length: 300".into()], &[0u8; 300])).await;
-        let good_url = serve(move |_, _| response("200 OK", &["Content-Length: 300".into()], &g)).await;
+        let bad_url =
+            serve(|_, _| response("200 OK", &["Content-Length: 300".into()], &[0u8; 300])).await;
+        let good_url =
+            serve(move |_, _| response("200 OK", &["Content-Length: 300".into()], &g)).await;
         let dest = scratch("verified");
         let winner = download_verified(
             &reqwest::Client::new(),

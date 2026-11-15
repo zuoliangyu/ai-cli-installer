@@ -2,6 +2,7 @@ use futures_util::StreamExt;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use std::time::Duration;
 
 use crate::error::{AppError, Result};
 
@@ -44,6 +45,7 @@ impl PlatformEntry {
 /// fixes.json). Real payloads are a few KB; a proxy that streams more than
 /// this is broken or hostile, and we must not buffer it all in memory.
 pub const MAX_METADATA_BYTES: usize = 1024 * 1024;
+const METADATA_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Read a response body into memory, failing once it exceeds `max` bytes.
 pub async fn read_capped(resp: reqwest::Response, max: usize) -> Result<Vec<u8>> {
@@ -63,18 +65,65 @@ pub async fn read_capped(resp: reqwest::Response, max: usize) -> Result<Vec<u8>>
 }
 
 pub async fn fetch_text(client: &reqwest::Client, url: &str) -> Result<String> {
-    let resp = client.get(url).send().await?.error_for_status()?;
-    let body = read_capped(resp, MAX_METADATA_BYTES).await?;
+    let body = fetch_metadata(client, url, METADATA_TIMEOUT).await?;
     Ok(String::from_utf8_lossy(&body).trim().to_string())
 }
 
 /// GET `url` and parse it as JSON (size-capped like [`fetch_text`]).
 pub async fn fetch_json<T: DeserializeOwned>(client: &reqwest::Client, url: &str) -> Result<T> {
-    let resp = client.get(url).send().await?.error_for_status()?;
-    let body = read_capped(resp, MAX_METADATA_BYTES).await?;
+    let body = fetch_metadata(client, url, METADATA_TIMEOUT).await?;
     Ok(serde_json::from_slice(&body)?)
+}
+
+async fn fetch_metadata(client: &reqwest::Client, url: &str, timeout: Duration) -> Result<Vec<u8>> {
+    let resp = client
+        .get(url)
+        .timeout(timeout)
+        .send()
+        .await?
+        .error_for_status()?;
+    read_capped(resp, MAX_METADATA_BYTES).await
 }
 
 pub async fn fetch_manifest(client: &reqwest::Client, url: &str) -> Result<Manifest> {
     fetch_json(client, url).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    #[tokio::test]
+    async fn metadata_keeps_total_deadline_during_continuous_body() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = [0u8; 4096];
+            socket.read(&mut request).await.unwrap();
+            socket
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 20\r\nConnection: close\r\n\r\n")
+                .await
+                .unwrap();
+            for _ in 0..20 {
+                tokio::time::sleep(Duration::from_millis(30)).await;
+                if socket.write_all(b"x").await.is_err() {
+                    return;
+                }
+            }
+        });
+        let client = crate::app_state::build_http_client(Duration::from_secs(1));
+        let result = fetch_metadata(
+            &client,
+            &format!("http://{addr}/metadata"),
+            Duration::from_millis(100),
+        )
+        .await;
+        server.abort();
+        match result {
+            Err(AppError::Network(error)) => assert!(error.is_timeout(), "{error}"),
+            other => panic!("expected metadata total timeout, got {other:?}"),
+        }
+    }
 }

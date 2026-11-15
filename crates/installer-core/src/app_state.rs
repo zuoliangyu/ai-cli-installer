@@ -46,11 +46,7 @@ impl AppState {
         // GUI launches (Finder / desktop launchers) inherit a minimal PATH;
         // fix it before anything spawns `node` / `npm` / `claude`.
         crate::platform::ensure_login_shell_path();
-        let client = reqwest::Client::builder()
-            .user_agent(concat!("ai-cli-installer/", env!("CARGO_PKG_VERSION")))
-            .timeout(Duration::from_secs(60))
-            .build()
-            .expect("build reqwest client");
+        let client = build_http_client(Duration::from_secs(60));
         Self::with_client(client)
     }
 
@@ -83,6 +79,15 @@ impl AppState {
     fn cached_tools(&self) -> Option<Vec<ToolDescriptor>> {
         self.tools_cache.lock().ok()?.clone()
     }
+}
+
+pub(crate) fn build_http_client(connect_timeout: Duration) -> reqwest::Client {
+    // Downloads have header/idle deadlines; a total deadline cuts off healthy slow streams.
+    reqwest::Client::builder()
+        .user_agent(concat!("ai-cli-installer/", env!("CARGO_PKG_VERSION")))
+        .connect_timeout(connect_timeout)
+        .build()
+        .expect("build reqwest client")
 }
 
 impl Default for AppState {
@@ -164,10 +169,18 @@ async fn list_tools_uncached(state: &AppState) -> Vec<ToolDescriptor> {
     let (cx_latest, cx_latest_stale) = cx_latest;
     let (cx_stable_raw, cx_stable_stale_raw) = cx_stable;
 
-    let (cc_stable, cc_falls_back, cc_stable_stale) =
-        resolve_stable(cc_stable_raw, cc_stable_stale_raw, &cc_latest, cc_latest_stale);
-    let (cx_stable, cx_falls_back, cx_stable_stale) =
-        resolve_stable(cx_stable_raw, cx_stable_stale_raw, &cx_latest, cx_latest_stale);
+    let (cc_stable, cc_falls_back, cc_stable_stale) = resolve_stable(
+        cc_stable_raw,
+        cc_stable_stale_raw,
+        &cc_latest,
+        cc_latest_stale,
+    );
+    let (cx_stable, cx_falls_back, cx_stable_stale) = resolve_stable(
+        cx_stable_raw,
+        cx_stable_stale_raw,
+        &cx_latest,
+        cx_latest_stale,
+    );
 
     // `installed_version` comes from the diagnosis (which already ran
     // `--version` on every candidate) instead of a second detect pass.
@@ -197,7 +210,11 @@ fn installed_from(installs: &[install_diagnostics::ToolInstallation]) -> Option<
     installs
         .iter()
         .find(|i| i.source == InstallationSource::Native && i.managed && i.version.is_some())
-        .or_else(|| installs.iter().find(|i| i.current_path && i.version.is_some()))
+        .or_else(|| {
+            installs
+                .iter()
+                .find(|i| i.current_path && i.version.is_some())
+        })
         .or_else(|| installs.iter().find(|i| i.version.is_some()))
         .and_then(|i| i.version.clone())
 }
@@ -514,7 +531,12 @@ mod tests {
     use super::*;
     use crate::install_diagnostics::ToolInstallation;
 
-    fn inst(source: InstallationSource, version: &str, current: bool, managed: bool) -> ToolInstallation {
+    fn inst(
+        source: InstallationSource,
+        version: &str,
+        current: bool,
+        managed: bool,
+    ) -> ToolInstallation {
         ToolInstallation {
             source,
             version: Some(version.to_string()),
@@ -545,7 +567,10 @@ mod tests {
         let bs = "\\";
         let drive = format!("C:{bs}Users{bs}a b{bs}x.json");
         let verbatim = format!("{bs}{bs}?{bs}{drive}");
-        assert_eq!(strip_verbatim_prefix(std::path::Path::new(&verbatim)), PathBuf::from(&drive));
+        assert_eq!(
+            strip_verbatim_prefix(std::path::Path::new(&verbatim)),
+            PathBuf::from(&drive)
+        );
 
         let unc = format!("{bs}{bs}?{bs}UNC{bs}srv{bs}share{bs}x.json");
         assert_eq!(
@@ -553,9 +578,15 @@ mod tests {
             PathBuf::from(format!("{bs}{bs}srv{bs}share{bs}x.json"))
         );
 
-        assert_eq!(strip_verbatim_prefix(std::path::Path::new(&drive)), PathBuf::from(&drive));
+        assert_eq!(
+            strip_verbatim_prefix(std::path::Path::new(&drive)),
+            PathBuf::from(&drive)
+        );
         let volume = format!("{bs}{bs}?{bs}Volume{{abc}}{bs}x.json");
-        assert_eq!(strip_verbatim_prefix(std::path::Path::new(&volume)), PathBuf::from(&volume));
+        assert_eq!(
+            strip_verbatim_prefix(std::path::Path::new(&volume)),
+            PathBuf::from(&volume)
+        );
     }
 
     #[test]
@@ -566,7 +597,10 @@ mod tests {
         assert_eq!(state.memo_get("t", "stable"), None);
         state.version_memo.lock().unwrap().insert(
             ("t".into(), "latest".into()),
-            ("1.2.3".into(), Instant::now() - VERSION_MEMO_TTL - Duration::from_secs(1)),
+            (
+                "1.2.3".into(),
+                Instant::now() - VERSION_MEMO_TTL - Duration::from_secs(1),
+            ),
         );
         assert_eq!(state.memo_get("t", "latest"), None);
     }
