@@ -65,10 +65,11 @@ impl ClaudeCode {
             .clone();
         validate::ensure_file_name(&entry.binary, "manifest binary")?;
 
-        let staging = installer::staging_dir()?;
-        tokio::fs::create_dir_all(&staging).await?;
+        let staging = installer::TempStage::new()?;
         let staged_name = format!("claude-{}-{}", version, plat);
-        let dest = staging.join(validate::ensure_file_name(&staged_name, "staging file")?);
+        let dest = staging
+            .path()
+            .join(validate::ensure_file_name(&staged_name, "staging file")?);
 
         // Collected up front: a borrowed iterator held across `.await` makes
         // the install future non-`Send` (axum / tauri handlers need Send).
@@ -116,14 +117,16 @@ impl ClaudeCode {
                 let launcher_dir = self
                     .launcher_dir()
                     .ok_or_else(|| AppError::Other("no home dir".into()))?;
-                let deployed =
-                    installer::deploy_binary_to_launcher(&dest, &launcher_dir, Self::bin_name())
-                        .await?;
+                let deployed = installer::deploy_binary_to_launcher(
+                    &dest,
+                    &launcher_dir,
+                    Self::bin_name(),
+                    staging.clone(),
+                )
+                .await?;
                 tracing::info!("deployed bootstrap to {}", deployed.display());
             }
         }
-
-        let _ = tokio::fs::remove_file(&dest).await;
 
         let install_path = self
             .launcher_path()

@@ -49,10 +49,11 @@ impl CodexCli {
             validate::ensure_file_name(entry.runtime_filename(), "manifest runtime_binary")?
                 .to_string();
 
-        let staging = installer::staging_dir()?;
-        tokio::fs::create_dir_all(&staging).await?;
+        let staging = installer::TempStage::new()?;
         let staged_name = format!("codex-{}-{}", version, plat);
-        let zst_dest = staging.join(validate::ensure_file_name(&staged_name, "staging file")?);
+        let zst_dest = staging
+            .path()
+            .join(validate::ensure_file_name(&staged_name, "staging file")?);
 
         // Collected up front: a borrowed iterator held across `.await` makes
         // the install future non-`Send` (axum / tauri handlers need Send).
@@ -86,7 +87,9 @@ impl CodexCli {
         // Decompression is CPU-bound and synchronous: off the async runtime,
         // into a temp file that's renamed over the (possibly running) binary.
         let src = zst_dest.clone();
+        let blocking_stage = staging.clone();
         installer::install_executable(final_path.clone(), move |out| {
+            let _stage = blocking_stage;
             let input = std::fs::File::open(&src)?;
             let mut decoder = zstd::stream::Decoder::new(input)?;
             std::io::copy(&mut decoder, out)?;
@@ -94,7 +97,6 @@ impl CodexCli {
         })
         .await
         .map_err(|e| AppError::Other(format!("解压 Codex 失败：{}", e)))?;
-        let _ = tokio::fs::remove_file(&zst_dest).await;
 
         Ok(InstallReport {
             tool_id: Self::ID.to_string(),

@@ -305,6 +305,7 @@ pub async fn install_via_mirror_tarballs(
     version: &str,
     platform: &str,
 ) -> Result<()> {
+    validate::ensure_version(version, "npm 版本")?;
     let manifest = fetch_npm_manifest(client, manifest_mirrors, version).await?;
     let (main, plat_entry) = select_entries(&manifest, package, platform)?;
 
@@ -312,10 +313,9 @@ pub async fn install_via_mirror_tarballs(
     let main_tgz = validate::ensure_file_name(&main.tgz, "npm-manifest tgz")?;
     let plat_tgz = validate::ensure_file_name(&plat_entry.tgz, "npm-manifest tgz")?;
 
-    // Stage to a tool-and-version-keyed cache dir
-    let cache = npm_stage_dir(version)?;
-    let main_path = cache.join(main_tgz);
-    let plat_path = cache.join(plat_tgz);
+    let stage = crate::installer::TempStage::new()?;
+    let main_path = stage.path().join(main_tgz);
+    let plat_path = stage.path().join(plat_tgz);
 
     let progress = crate::progress::noop_progress();
     for (entry, tgz, dest) in [
@@ -373,21 +373,7 @@ pub async fn install_via_mirror_tarballs(
         )));
     }
 
-    // Cleanup staged tarballs (cache copy is what matters now)
-    let _ = tokio::fs::remove_file(&main_path).await;
-    let _ = tokio::fs::remove_file(&plat_path).await;
-
     Ok(())
-}
-
-fn npm_stage_dir(version: &str) -> Result<PathBuf> {
-    let version = validate::ensure_version(version, "npm 版本")?;
-    let home = dirs::home_dir().ok_or_else(|| AppError::Other("no home dir".into()))?;
-    Ok(home
-        .join(".cache")
-        .join("ai-cli-installer")
-        .join("npm")
-        .join(version))
 }
 
 /// `npm bin -g` returns the global bin directory. Useful for verifying
@@ -566,10 +552,21 @@ mod tests {
         assert_eq!(entry(CC, None, "x").detect_platform(), None);
     }
 
-    #[test]
-    fn stage_dir_rejects_bad_versions() {
-        assert!(npm_stage_dir("../../etc").is_err());
-        assert!(npm_stage_dir("1.2.3").is_ok());
+    #[tokio::test]
+    async fn mirror_install_rejects_bad_versions_before_network() {
+        let empty = MirrorList {
+            mirrors: Vec::new(),
+        };
+        let result = install_via_mirror_tarballs(
+            &reqwest::Client::new(),
+            &empty,
+            &empty,
+            CC,
+            "../../etc",
+            "win32-x64",
+        )
+        .await;
+        assert!(result.unwrap_err().to_string().contains("npm 版本"));
     }
 
     #[test]

@@ -1,13 +1,81 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use tokio::process::Command;
 
 use crate::error::{AppError, Result};
 
-/// Where the bootstrap binary is staged before invoking its self-install.
-pub fn staging_dir() -> Result<PathBuf> {
-    let home = dirs::home_dir().ok_or_else(|| AppError::Other("no home dir".into()))?;
-    Ok(home.join(".claude").join("downloads"))
+static NEXT_STAGE: AtomicU64 = AtomicU64::new(0);
+
+/// One install's private files; clones keep them alive across blocking work.
+#[derive(Clone)]
+pub struct TempStage(Arc<StageDirectory>);
+
+struct StageDirectory(PathBuf);
+
+impl TempStage {
+    pub fn new() -> Result<Self> {
+        let home = dirs::home_dir().ok_or_else(|| AppError::Other("no home dir".into()))?;
+        Self::in_dir(&home.join(".cache").join("ai-cli-installer").join("staging"))
+            .map_err(AppError::Io)
+    }
+
+    fn in_dir(root: &Path) -> std::io::Result<Self> {
+        std::fs::create_dir_all(root)?;
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        for _ in 0..16 {
+            let sequence = NEXT_STAGE.fetch_add(1, Ordering::Relaxed);
+            let dir = root.join(format!("{}-{nonce}-{sequence}", std::process::id()));
+            match std::fs::create_dir(&dir) {
+                Ok(()) => return Ok(Self(Arc::new(StageDirectory(dir)))),
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(error) => return Err(error),
+            }
+        }
+        Err(std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            "cannot allocate a unique staging directory",
+        ))
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.0 .0
+    }
+}
+
+impl Drop for StageDirectory {
+    fn drop(&mut self) {
+        match std::fs::remove_dir_all(&self.0) {
+            Ok(()) => return,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+            Err(_) => {}
+        }
+        // Cancelled Windows file I/O/process termination may release handles shortly later.
+        // Retry only this uniquely-created directory, never scan or prune existing caches.
+        let path = self.0.clone();
+        if let Err(error) = std::thread::Builder::new()
+            .name("installer-stage-cleanup".into())
+            .spawn(move || {
+                for delay_ms in [20, 50, 100, 200, 400, 800] {
+                    std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+                    match std::fs::remove_dir_all(&path) {
+                        Ok(()) => return,
+                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+                        Err(error) if delay_ms == 800 => {
+                            tracing::warn!("cleanup stage {}: {error}", path.display())
+                        }
+                        Err(_) => {}
+                    }
+                }
+            })
+        {
+            tracing::warn!("start staging cleanup for {}: {error}", self.0.display());
+        }
+    }
 }
 
 /// Make a file executable (no-op on Windows).
@@ -78,6 +146,7 @@ pub async fn deploy_binary_to_launcher(
     binary: &Path,
     launcher_dir: &Path,
     bin_name: &str,
+    stage: TempStage,
 ) -> Result<PathBuf> {
     tokio::fs::create_dir_all(launcher_dir)
         .await
@@ -85,6 +154,7 @@ pub async fn deploy_binary_to_launcher(
     let final_path = launcher_dir.join(bin_name);
     let src = binary.to_path_buf();
     install_executable(final_path.clone(), move |out| {
+        let _stage = stage;
         let mut input = std::fs::File::open(&src)?;
         std::io::copy(&mut input, out)?;
         Ok(())
@@ -226,8 +296,7 @@ fn free_old_path(dest: &Path) -> PathBuf {
 /// Best-effort removal of `<name>.old*` (moved-aside binaries from a
 /// previous install) and orphaned `.<name>.new-*` temp files.
 pub fn cleanup_stale_binaries(dest: &Path) {
-    let (Some(dir), Some(name)) = (dest.parent(), dest.file_name().and_then(|n| n.to_str()))
-    else {
+    let (Some(dir), Some(name)) = (dest.parent(), dest.file_name().and_then(|n| n.to_str())) else {
         return;
     };
     let Ok(entries) = std::fs::read_dir(dir) else {
@@ -262,6 +331,106 @@ mod tests {
     use super::*;
 
     #[test]
+    fn temp_stages_are_unique_and_cleanup_only_their_own_files() {
+        let root = TempStage::in_dir(&std::env::temp_dir()).unwrap();
+        let legacy = root.path().join("existing-cache.tgz");
+        std::fs::write(&legacy, b"keep").unwrap();
+        let first = TempStage::in_dir(root.path()).unwrap();
+        let second = TempStage::in_dir(root.path()).unwrap();
+        let first_path = first.path().to_path_buf();
+        let second_path = second.path().to_path_buf();
+        assert_ne!(first_path, second_path);
+        std::fs::write(first.path().join("partial.zst.part"), b"partial").unwrap();
+        std::fs::write(second.path().join("package.tgz"), b"package").unwrap();
+
+        let failure = (|| -> std::io::Result<()> {
+            let _stage = first;
+            Err(std::io::Error::other("install failed"))
+        })();
+        assert!(failure.is_err());
+        assert!(!first_path.exists());
+        assert!(second_path.join("package.tgz").exists());
+        assert_eq!(std::fs::read(&legacy).unwrap(), b"keep");
+        drop(second);
+        assert!(!second_path.exists());
+    }
+
+    #[tokio::test]
+    async fn temp_stage_cleans_up_when_install_future_is_cancelled() {
+        let root = TempStage::in_dir(&std::env::temp_dir()).unwrap();
+        let stage = TempStage::in_dir(root.path()).unwrap();
+        let path = stage.path().to_path_buf();
+        std::fs::write(path.join("download.part"), b"partial").unwrap();
+        let (ready, started) = tokio::sync::oneshot::channel();
+        let task = tokio::spawn(async move {
+            let _stage = stage;
+            ready.send(()).unwrap();
+            std::future::pending::<()>().await;
+        });
+        started.await.unwrap();
+        task.abort();
+        assert!(task.await.unwrap_err().is_cancelled());
+        assert!(!path.exists());
+    }
+
+    #[tokio::test]
+    async fn temp_stage_survives_cancelled_wait_until_blocking_reader_finishes() {
+        let root = TempStage::in_dir(&std::env::temp_dir()).unwrap();
+        let stage = TempStage::in_dir(root.path()).unwrap();
+        let path = stage.path().to_path_buf();
+        std::fs::write(path.join("source"), b"verified bytes").unwrap();
+        let (ready, started) = tokio::sync::oneshot::channel();
+        let (release, wait) = std::sync::mpsc::channel();
+        let (done, finished) = tokio::sync::oneshot::channel();
+        let task = tokio::spawn(async move {
+            let blocking_stage = stage.clone();
+            tokio::task::spawn_blocking(move || {
+                ready.send(()).unwrap();
+                wait.recv_timeout(std::time::Duration::from_secs(3))
+                    .unwrap();
+                let contents = std::fs::read(blocking_stage.path().join("source")).unwrap();
+                drop(blocking_stage);
+                let _ = done.send(contents);
+            })
+            .await
+            .unwrap();
+            drop(stage);
+        });
+        started.await.unwrap();
+        task.abort();
+        assert!(task.await.unwrap_err().is_cancelled());
+        assert!(path.join("source").exists());
+        release.send(()).unwrap();
+        assert_eq!(finished.await.unwrap(), b"verified bytes");
+        assert!(!path.exists());
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn temp_stage_retries_cleanup_after_windows_handle_is_released() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let root = TempStage::in_dir(&std::env::temp_dir()).unwrap();
+        let stage = TempStage::in_dir(root.path()).unwrap();
+        let path = stage.path().to_path_buf();
+        let file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .share_mode(0)
+            .open(path.join("busy.exe"))
+            .unwrap();
+        drop(stage);
+        assert!(path.exists());
+        drop(file);
+        tokio::time::timeout(std::time::Duration::from_secs(3), async {
+            while path.exists() {
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("stage remained after its file handle was released");
+    }
+
+    #[test]
     fn stale_name_matching() {
         let old = "codex.exe.old";
         let tmp = ".codex.exe.new-";
@@ -275,8 +444,7 @@ mod tests {
 
     #[test]
     fn replaces_existing_file_atomically() {
-        let dir =
-            std::env::temp_dir().join(format!("ai-cli-installer-exe-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("ai-cli-installer-exe-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let dest = dir.join("tool.bin");
