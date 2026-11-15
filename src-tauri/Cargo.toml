@@ -4,7 +4,7 @@ version = "0.6.0"
 description = "One-click installer for Claude Code with mirror acceleration"
 authors = ["zuoliangyu"]
 edition = "2021"
-rust-version = "1.80"
+rust-version.workspace = true
 
 [lib]
 name = "ai_cli_installer_lib"

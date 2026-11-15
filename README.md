@@ -96,8 +96,8 @@ src-tauri/                    Tauri 桌面壳
 
 需要：
 
-- Rust 1.80+ (`rustup install stable`)
-- Node 20+ / npm
+- Rust 1.90+ (`rustup install stable`)，三个 crate 共享 workspace 的最低版本声明
+- Node 20.19+（20.x）、22.12+（22.x）或 24+ / npm；推荐使用受支持的 LTS 版本
 - Tauri CLI: `cargo install tauri-cli --locked --version "^2.0"`
 - 各平台原生依赖：参考 https://v2.tauri.app/start/prerequisites/
 

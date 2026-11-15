@@ -2,6 +2,9 @@
 members = ["src-tauri", "crates/installer-core", "crates/installer-web"]
 resolver = "2"
 
+[workspace.package]
+rust-version = "1.90"
+
 [profile.release]
 lto = true
 codegen-units = 1

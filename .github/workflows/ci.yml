@@ -25,7 +25,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
 
-      - uses: dtolnay/rust-toolchain@stable
+      # Keep the Linux workspace check on the declared minimum Rust version.
+      - uses: dtolnay/rust-toolchain@1.90.0
         with:
           components: clippy
 
@@ -41,10 +42,10 @@ jobs:
           echo '<!doctype html><title>ci</title>' > dist/index.html
 
       - name: Clippy
-        run: cargo clippy --workspace --all-targets
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
       - name: Test
-        run: cargo test --workspace
+        run: cargo test --workspace --locked
 
   rust-windows:
     name: installer-core tests (Windows)
@@ -59,7 +60,7 @@ jobs:
           workspaces: .
 
       - name: Test installer-core
-        run: cargo test -p installer-core
+        run: cargo test -p installer-core --locked
 
   frontend:
     name: Frontend (svelte-check + build)
