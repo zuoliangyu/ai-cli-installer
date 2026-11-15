@@ -153,6 +153,8 @@ npm run web
 
 配置修复和 Unix PATH 写入前会保留递增备份：首次为 `.bak`，后续为 `.bak.1`、`.bak.2` 等，只保留最近 5 份；内容没有变化时不写入也不备份。同名配置字段会覆盖，其他字段保持不变。
 
+Unix PATH 按当前 shell 选择配置文件。fish 使用 `$XDG_CONFIG_HOME/fish/conf.d/ai-cli-installer.fish`，未设置或使用相对 `XDG_CONFIG_HOME` 时回退到 `~/.config/fish/conf.d/ai-cli-installer.fish`。重新添加会原位更新完整的管理块并保留其它内容；残缺管理块会提示错误。修改后新开终端生效。
+
 下载暂存文件位于 `~/.cache/ai-cli-installer/staging/` 下的任务专属目录。安装完成、失败或取消后自动清理，正在进行的阻塞复制/解压会先完成再释放目录；历史版本遗留的缓存不自动删除。
 
 ## 构建

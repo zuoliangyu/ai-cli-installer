@@ -17,27 +17,30 @@
 
 use std::path::{Path, PathBuf};
 
-use super::rc_block::{self, Strip, MARKER_BEGIN};
+use super::rc_block::{self, Strip};
 use super::{PathScope, PathStatus};
 use crate::error::{AppError, Result};
 
-fn rc_files() -> Vec<PathBuf> {
-    let Some(home) = dirs::home_dir() else {
-        return vec![];
-    };
-    let shell = std::env::var("SHELL").ok();
-    rc_block::rc_targets(&home, shell.as_deref(), cfg!(target_os = "macos"), |p| {
-        p.exists()
-    })
+fn rc_files(shell: Option<&str>) -> Result<Vec<PathBuf>> {
+    let home = dirs::home_dir().ok_or_else(|| AppError::Other("no home dir".into()))?;
+    let xdg_config_home = std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from);
+    Ok(rc_block::rc_targets(
+        &home,
+        shell,
+        cfg!(target_os = "macos"),
+        xdg_config_home.as_deref(),
+        |p| p.exists(),
+    ))
 }
 
 pub async fn status(dir: &Path) -> Result<PathStatus> {
     let dir_str = dir.to_string_lossy().to_string();
 
-    // "in_user_path" = our marker block exists in any rc file
-    let in_user_path = rc_files().iter().any(|p| {
+    let shell = std::env::var("SHELL").ok();
+    // Fish only reads its own snippet; an old .profile marker doesn't count.
+    let in_user_path = rc_files(shell.as_deref())?.iter().any(|p| {
         std::fs::read_to_string(p)
-            .map(|s| s.contains(MARKER_BEGIN))
+            .map(|s| matches!(rc_block::strip_marker_block(&s), Strip::Removed(_)))
             .unwrap_or(false)
     });
 
@@ -66,13 +69,13 @@ pub async fn add(dir: &Path, scope: PathScope) -> Result<()> {
                 .into(),
         ));
     }
-    let block = rc_block::path_block(&dir.to_string_lossy());
-    for rc in rc_files() {
+    let shell = std::env::var("SHELL").ok();
+    let block = rc_block::path_block(&dir.to_string_lossy(), shell.as_deref());
+    for rc in rc_files(shell.as_deref())? {
         // Read + append + write happens under the config lock in one go.
         crate::config_file::update_with_backup(&rc, |existing| {
-            Ok::<_, std::io::Error>(
-                rc_block::append_block(existing.unwrap_or(""), &block).map(String::into_bytes),
-            )
+            rc_block::append_block(existing.unwrap_or(""), &block)
+                .map(|updated| updated.map(String::into_bytes))
         })
         .map_err(|e| AppError::Other(format!("write {}: {}", rc.display(), e)))?;
     }
@@ -87,7 +90,8 @@ pub async fn remove(dir: &Path, scope: PathScope) -> Result<()> {
     }
     let _ = dir; // signature parity with windows
     let mut incomplete: Vec<String> = Vec::new();
-    for rc in rc_files() {
+    let shell = std::env::var("SHELL").ok();
+    for rc in rc_files(shell.as_deref())? {
         if !rc.exists() {
             continue;
         }
