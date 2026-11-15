@@ -122,6 +122,8 @@ pub(crate) fn atomic_write(path: &Path, content: &[u8]) -> std::io::Result<()> {
         if let Ok(meta) = std::fs::metadata(&tmp) {
             let mut permissions = meta.permissions();
             if permissions.readonly() {
+                // This branch is Windows-only: remove the temporary file's readonly attribute.
+                #[allow(clippy::permissions_set_readonly_false)]
                 permissions.set_readonly(false);
                 let _ = std::fs::set_permissions(&tmp, permissions);
             }
