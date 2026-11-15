@@ -1,0 +1,5 @@
+FROM mcr.microsoft.com/playwright:v1.58.2-noble
+RUN npm install --prefix /opt/playwright --no-audit --no-fund --save-exact playwright@1.58.2
+ENV NODE_PATH=/opt/playwright/node_modules
+WORKDIR /tests
+CMD ["node", "/tests/browser.mjs"]

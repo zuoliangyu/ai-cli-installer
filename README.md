@@ -151,7 +151,7 @@ npm run web
 
 浏览器使用 `http://服务器地址:3210/?token=访问令牌` 首次打开。页面会把令牌保存到当前标签页的 `sessionStorage`，并立即从地址栏移除；API 使用 Bearer 鉴权，WebSocket 使用同一令牌。公网使用时仍应放在 HTTPS 反向代理或 SSH 隧道后，避免明文 HTTP 泄露令牌和 API Key。
 
-> 注意：Web 模式改的是**运行 installer-web 的那台机器**的环境（`~/.local/bin`、PATH、`~/.claude/settings.json`）。容器化对该应用没有意义，因此不提供 Docker 镜像。
+> 注意：Web 模式改的是**运行 installer-web 的那台机器**的环境（`~/.local/bin`、PATH、`~/.claude/settings.json`）。在 Docker 中运行时，安装和配置只作用于容器内部，适合隔离验证，不会替宿主机安装 CLI。项目提供[Docker 测试环境](tests/docker/README.md)，不发布生产容器镜像。
 
 配置修复和 Unix PATH 写入前会保留递增备份：首次为 `.bak`，后续为 `.bak.1`、`.bak.2` 等，只保留最近 5 份；内容没有变化时不写入也不备份。同名配置字段会覆盖，其他字段保持不变。
 
@@ -195,6 +195,18 @@ npm run test:frontend    # 安装任务恢复与状态同步的轻量回归测�
 cargo check --workspace  # 三 crate 全检查
 cargo clippy --workspace -- -D warnings
 ```
+
+## Docker Linux 验证
+
+在 Docker Desktop 的 Linux 容器模式下，使用 PowerShell 7.2+ 从仓库根目录运行：
+
+```powershell
+./tests/docker/run.ps1
+```
+
+该命令会构建测试环境，运行 Linux core/Web 测试和前端检查，实际验证 Claude Code、Codex 的 Native/npm 安装，并使用 Chromium 检查 Web 安装、刷新恢复和故障提示。首次需要联网下载依赖和 CLI；所有安装使用容器自己的用户目录，不挂载宿主机 CLI 配置或凭据。
+
+日志、JSON 结果和截图保存在 `target/docker-validation/<运行编号>/`。分阶段运行和验证边界见[测试说明](tests/docker/README.md)。
 
 ## 代码风格
 
