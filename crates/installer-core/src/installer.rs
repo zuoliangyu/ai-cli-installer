@@ -178,10 +178,14 @@ pub async fn install_executable<F>(dest: PathBuf, write: F) -> Result<()>
 where
     F: FnOnce(&mut std::fs::File) -> std::io::Result<()> + Send + 'static,
 {
-    tokio::task::spawn_blocking(move || replace_executable(&dest, write))
-        .await
-        .map_err(|e| AppError::Install(format!("install task failed: {}", e)))?
-        .map_err(AppError::Io)
+    let operation = crate::operation_lock::current_guard();
+    tokio::task::spawn_blocking(move || {
+        let _operation = operation;
+        replace_executable(&dest, write)
+    })
+    .await
+    .map_err(|e| AppError::Install(format!("install task failed: {}", e)))?
+    .map_err(AppError::Io)
 }
 
 fn sibling(dest: &Path, prefix: &str, suffix: &str) -> PathBuf {
@@ -343,10 +347,10 @@ mod tests {
         std::fs::write(first.path().join("partial.zst.part"), b"partial").unwrap();
         std::fs::write(second.path().join("package.tgz"), b"package").unwrap();
 
-        let failure = (|| -> std::io::Result<()> {
+        let failure: std::io::Result<()> = {
             let _stage = first;
             Err(std::io::Error::other("install failed"))
-        })();
+        };
         assert!(failure.is_err());
         assert!(!first_path.exists());
         assert!(second_path.join("package.tgz").exists());

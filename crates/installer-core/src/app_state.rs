@@ -18,6 +18,7 @@ use crate::install_diagnostics::{self, InstallationSource};
 use crate::install_tasks::{InstallRequest, InstallTask, InstallTasks, TaskSnapshot};
 use crate::mirrors::{self, MirrorList, MirrorProbe};
 use crate::npm_installer::{self, NodeInfo};
+use crate::operation_lock::{self, OperationLock};
 use crate::progress::ProgressCallback;
 use crate::tools::{
     claude_code::ClaudeCode, codex::CodexCli, InstallMethod, InstallReport, Tool, ToolDescriptor,
@@ -36,6 +37,7 @@ pub struct AppState {
     /// tool's `--version` while an install replaces it caused Windows
     /// file-in-use errors.
     tool_operations: Mutex<()>,
+    operation_lock: OperationLock,
     /// Last successful `list_tools` result, served while an operation holds
     /// `tool_operations` so the UI doesn't freeze during an install.
     tools_cache: std::sync::Mutex<Option<Vec<ToolDescriptor>>>,
@@ -58,6 +60,7 @@ impl AppState {
             mirrors: RwLock::new(MirrorList::builtin()),
             install_tasks: Arc::new(InstallTasks::default()),
             tool_operations: Mutex::new(()),
+            operation_lock: OperationLock::for_user(),
             tools_cache: std::sync::Mutex::new(None),
             version_memo: std::sync::Mutex::new(HashMap::new()),
         }
@@ -110,6 +113,7 @@ pub async fn list_tools(state: &AppState) -> Result<Vec<ToolDescriptor>> {
     // While an install / diagnosis holds the lock, running `--version` on the
     // binaries being replaced is exactly what v0.5.3 serialized away — so
     // answer from the last result instead of blocking the UI for minutes.
+    let waiting_since = tokio::time::Instant::now();
     let _operation = match state.tool_operations.try_lock() {
         Ok(guard) => guard,
         Err(_) => {
@@ -117,7 +121,25 @@ pub async fn list_tools(state: &AppState) -> Result<Vec<ToolDescriptor>> {
                 tracing::debug!("list_tools: operation in progress, serving cached result");
                 return Ok(cached);
             }
-            state.tool_operations.lock().await
+            tokio::time::timeout(operation_lock::WAIT_TIMEOUT, state.tool_operations.lock())
+                .await
+                .map_err(|_| operation_lock::busy_error())?
+        }
+    };
+    let _process_operation = match state.operation_lock.try_acquire()? {
+        Some(guard) => guard,
+        None => {
+            if let Some(cached) = state.cached_tools() {
+                tracing::debug!(
+                    "list_tools: another installer process is busy, serving cached result"
+                );
+                return Ok(cached);
+            }
+            tracing::info!("list_tools: waiting for another installer process");
+            state
+                .operation_lock
+                .acquire(operation_lock::WAIT_TIMEOUT.saturating_sub(waiting_since.elapsed()))
+                .await?
         }
     };
     let tools = list_tools_uncached(state).await;
@@ -276,29 +298,49 @@ pub async fn install_tool(
     method: Option<InstallMethod>,
     mirror: Option<String>,
 ) -> Result<InstallReport> {
-    let _operation = state.tool_operations.lock().await;
-    let requested_channel = channel.unwrap_or_else(|| "latest".to_string());
-    let method = method.unwrap_or_default();
-    let client = state.client.clone();
-    match tool_id {
-        ClaudeCode::ID => {
-            let mirrors = filter_mirrors(ClaudeCode.mirror_list(), mirror.as_deref())?;
-            let (channel, version) =
-                resolve_install_version(state, &ClaudeCode, requested_channel, &mirrors).await?;
-            ClaudeCode
-                .install_version(method, progress, client, mirrors, channel, version)
-                .await
+    let waiting_since = tokio::time::Instant::now();
+    let _operation =
+        tokio::time::timeout(operation_lock::WAIT_TIMEOUT, state.tool_operations.lock())
+            .await
+            .map_err(|_| operation_lock::busy_error())?;
+    let process_operation = match state.operation_lock.try_acquire()? {
+        Some(guard) => guard,
+        None => {
+            tracing::info!("install_tool: waiting for another installer process");
+            state
+                .operation_lock
+                .acquire(operation_lock::WAIT_TIMEOUT.saturating_sub(waiting_since.elapsed()))
+                .await?
         }
-        CodexCli::ID => {
-            let mirrors = filter_mirrors(CodexCli.mirror_list(), mirror.as_deref())?;
-            let (channel, version) =
-                resolve_install_version(state, &CodexCli, requested_channel, &mirrors).await?;
-            CodexCli
-                .install_version(method, progress, client, mirrors, channel, version)
-                .await
-        }
-        other => Err(AppError::Other(format!("unknown tool: {}", other))),
-    }
+    };
+    process_operation
+        .scope(async {
+            let requested_channel = channel.unwrap_or_else(|| "latest".to_string());
+            let method = method.unwrap_or_default();
+            let client = state.client.clone();
+            match tool_id {
+                ClaudeCode::ID => {
+                    let mirrors = filter_mirrors(ClaudeCode.mirror_list(), mirror.as_deref())?;
+                    let (channel, version) =
+                        resolve_install_version(state, &ClaudeCode, requested_channel, &mirrors)
+                            .await?;
+                    ClaudeCode
+                        .install_version(method, progress, client, mirrors, channel, version)
+                        .await
+                }
+                CodexCli::ID => {
+                    let mirrors = filter_mirrors(CodexCli.mirror_list(), mirror.as_deref())?;
+                    let (channel, version) =
+                        resolve_install_version(state, &CodexCli, requested_channel, &mirrors)
+                            .await?;
+                    CodexCli
+                        .install_version(method, progress, client, mirrors, channel, version)
+                        .await
+                }
+                other => Err(AppError::Other(format!("unknown tool: {}", other))),
+            }
+        })
+        .await
 }
 
 /// If the caller pinned a specific mirror by name, narrow the list to that
@@ -679,5 +721,44 @@ mod tests {
             .expect("must not wait for the operation lock")
             .unwrap();
         assert_eq!(tools[0].installed_version.as_deref(), Some("9.9.9"));
+    }
+
+    #[tokio::test]
+    async fn list_tools_uses_cache_or_waits_when_file_lock_is_busy() {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "installer-list-lock-{}-{nonce}",
+            std::process::id()
+        ));
+        let path = dir.join("operations.lock");
+        let holder = OperationLock::at(path.clone())
+            .try_acquire()
+            .unwrap()
+            .unwrap();
+        let mut state = AppState::with_client(reqwest::Client::new());
+        state.operation_lock = OperationLock::at(path.clone());
+        let mut cached = ClaudeCode.descriptor();
+        cached.installed_version = Some("9.9.8".into());
+        *state.tools_cache.lock().unwrap() = Some(vec![cached]);
+        let tools = tokio::time::timeout(Duration::from_secs(1), list_tools(&state))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(tools[0].installed_version.as_deref(), Some("9.9.8"));
+
+        *state.tools_cache.lock().unwrap() = None;
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), list_tools(&state))
+                .await
+                .is_err()
+        );
+        assert!(state.tool_operations.try_lock().is_ok());
+        drop(holder);
+        assert!(state.operation_lock.try_acquire().unwrap().is_some());
+        std::fs::remove_file(path).unwrap();
+        std::fs::remove_dir(dir).unwrap();
     }
 }

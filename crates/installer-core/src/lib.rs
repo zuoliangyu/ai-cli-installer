@@ -21,6 +21,7 @@ pub mod install_tasks;
 pub mod installer;
 pub mod mirrors;
 pub mod npm_installer;
+mod operation_lock;
 pub mod platform;
 pub mod proc;
 pub mod progress;
