@@ -115,10 +115,11 @@ async fn run_elevated_powershell(script: &str) -> Result<()> {
     // The inner script travels as -EncodedCommand: Start-Process joins
     // -ArgumentList with spaces and doesn't escape quotes, so a plain
     // -Command would mangle anything containing `"`.
-    let outer = format!(
-        r#"$p = Start-Process powershell -Verb RunAs -Wait -PassThru -WindowStyle Hidden -ArgumentList '-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-EncodedCommand','{encoded}'; exit $p.ExitCode"#,
+    let launch = format!(
+        r#"Start-Process powershell -Verb RunAs -Wait -PassThru -WindowStyle Hidden -ArgumentList '-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-EncodedCommand','{encoded}'"#,
         encoded = encode_ps_command(script)
     );
+    let outer = checked_start_process(&launch);
 
     let mut cmd = Command::new("powershell");
     cmd.args([
@@ -126,8 +127,8 @@ async fn run_elevated_powershell(script: &str) -> Result<()> {
         "-NonInteractive",
         "-ExecutionPolicy",
         "Bypass",
-        "-Command",
-        &outer,
+        "-EncodedCommand",
+        &encode_ps_command(&outer),
     ]);
     silence_windows(&mut cmd);
     // Includes the time the user spends looking at the UAC prompt.
@@ -139,8 +140,8 @@ async fn run_elevated_powershell(script: &str) -> Result<()> {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let stdout = String::from_utf8_lossy(&output.stdout);
         let code = output.status.code().unwrap_or(-1);
-        // Common UAC denial: exit code 1223 from Start-Process is "operation cancelled"
-        if code == 1223 || stderr.contains("cancel") {
+        // The wrapper normalizes native and localized UAC cancellation errors.
+        if code == 1223 {
             return Err(AppError::Other(
                 "用户取消了管理员授权（UAC）。系统 PATH 未修改。".into(),
             ));
@@ -153,6 +154,35 @@ async fn run_elevated_powershell(script: &str) -> Result<()> {
     Ok(())
 }
 
+fn checked_start_process(launch: &str) -> String {
+    format!(
+        r#"
+$ErrorActionPreference = 'Stop'
+try {{
+    $p = {launch}
+    if ($null -eq $p -or $null -eq $p.ExitCode) {{ throw 'Child process did not return an exit code' }}
+    exit $p.ExitCode
+}} catch {{
+    $exitCode = 1
+    $exception = $_.Exception
+    while ($null -ne $exception) {{
+        if ($exception -is [System.ComponentModel.Win32Exception] -and $exception.NativeErrorCode -ne 0) {{
+            $exitCode = $exception.NativeErrorCode
+            break
+        }}
+        $exception = $exception.InnerException
+    }}
+    # Windows PowerShell can discard the native exception in Start-Process.
+    if ($exitCode -eq 1 -and $_.Exception.Message -match '(?i)cancelled|canceled|取消') {{
+        $exitCode = 1223
+    }}
+    [Console]::Error.WriteLine($_.Exception.Message)
+    exit $exitCode
+}}
+"#
+    )
+}
+
 /// `-EncodedCommand` payload: base64 of the UTF-16LE script.
 fn encode_ps_command(script: &str) -> String {
     let bytes: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
@@ -160,8 +190,7 @@ fn encode_ps_command(script: &str) -> String {
 }
 
 fn base64_encode(data: &[u8]) -> String {
-    const ALPHABET: &[u8; 64] =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
     for chunk in data.chunks(3) {
         let b = [
@@ -192,7 +221,9 @@ fn open_key_snippet(scope: PathScope) -> &'static str {
         PathScope::System => {
             r"$key = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey('SYSTEM\CurrentControlSet\Control\Session Manager\Environment', $true)"
         }
-        PathScope::User => r"$key = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Environment')",
+        PathScope::User => {
+            r"$key = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Environment')"
+        }
     }
 }
 
@@ -304,6 +335,79 @@ async fn run_local_powershell(script: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    async fn run_checked_launch(launch: &str) -> std::process::Output {
+        let mut cmd = Command::new("powershell");
+        cmd.args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-EncodedCommand",
+            &encode_ps_command(&checked_start_process(launch)),
+        ]);
+        silence_windows(&mut cmd);
+        output_with_timeout(&mut cmd, LOCAL_PS_TIMEOUT)
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn launch_failure_returns_nonzero_without_uac() {
+        let output = run_checked_launch(
+            "Start-Process -FilePath 'ai-cli-installer-nonexistent-4d1f830c.exe' -Wait -PassThru -WindowStyle Hidden",
+        )
+        .await;
+        assert!(!output.status.success());
+        assert!(!output.stderr.is_empty());
+    }
+
+    #[tokio::test]
+    async fn child_exit_code_is_preserved_without_uac() {
+        for code in [0, 7] {
+            let output = run_checked_launch(&format!(
+                "Start-Process -FilePath $env:ComSpec -Wait -PassThru -WindowStyle Hidden -ArgumentList '/d','/c','exit {code}'"
+            ))
+            .await;
+            assert_eq!(
+                output.status.code(),
+                Some(code),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn cancellation_uses_native_code_in_every_language() {
+        for message in ["The operation was canceled by the user", "用户已取消该操作"] {
+            let output = run_checked_launch(&format!(
+                "& {{ throw [System.InvalidOperationException]::new('Start failed', [System.ComponentModel.Win32Exception]::new(1223, '{}')) }}",
+                message
+            ))
+            .await;
+            assert_eq!(
+                output.status.code(),
+                Some(1223),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn cancellation_without_native_exception_is_normalized() {
+        for message in [
+            "This command cannot be run: The operation was canceled by the user",
+            "The operation was cancelled by the user",
+            "此命令无法运行：操作被用户取消。",
+        ] {
+            let output = run_checked_launch(&format!(
+                "& {{ throw [System.InvalidOperationException]::new('{}') }}",
+                message
+            ))
+            .await;
+            assert_eq!(output.status.code(), Some(1223));
+        }
+    }
 
     #[test]
     fn expands_known_vars_and_keeps_unknown() {
