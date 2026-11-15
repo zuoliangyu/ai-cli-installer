@@ -2173,6 +2173,7 @@ dependencies = [
  "dirs",
  "futures-util",
  "hex",
+ "libc",
  "reqwest",
  "serde",
  "serde_json",
@@ -2180,6 +2181,7 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "tracing",
+ "windows-sys 0.61.2",
  "winreg 0.52.0",
  "zstd 0.14.0",
 ]
